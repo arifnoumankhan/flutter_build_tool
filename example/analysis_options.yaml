@@ -1,0 +1,5 @@
+# The example is its own project: it does not inherit the lints of the package
+# (it has no `lints` dependency of its own).
+analyzer:
+  language:
+    strict-casts: true

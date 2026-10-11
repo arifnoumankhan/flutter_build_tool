@@ -1,0 +1,4 @@
+{
+  "APP_ENV": "dev",
+  "BASE_URL": "https://dev.example.com/api"
+}

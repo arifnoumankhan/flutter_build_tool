@@ -1,0 +1,4 @@
+{
+  "APP_ENV": "preprod",
+  "BASE_URL": "https://preprod.example.com/api"
+}

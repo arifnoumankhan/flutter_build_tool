@@ -1,0 +1,13 @@
+name: example_app
+description: A minimal project that builds with flutter_build_tools.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.0
+
+# A real app would also depend on the Flutter SDK. The example does not, so
+# `dart pub get` is enough to try the tool here.
+dev_dependencies:
+  flutter_build_tools:
+    path: ..

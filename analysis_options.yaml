@@ -1,0 +1,15 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-raw-types: true
+  exclude:
+    - build/**
+
+linter:
+  rules:
+    - always_use_package_imports
+    - prefer_single_quotes
+    - always_declare_return_types
+    - public_member_api_docs
