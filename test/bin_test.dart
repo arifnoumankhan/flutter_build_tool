@@ -104,6 +104,60 @@ void main() {
     expect(prod.stderr, contains('error [placeholder-url]'));
   });
 
+  test('init writes AppEnv by default and --no-app-env skips it', () async {
+    File(
+      p.join(temp.path, 'pubspec.yaml'),
+    ).writeAsStringSync('name: demo_shop\nversion: 3.0.1+12\n');
+    final appEnv = File(p.join(temp.path, 'lib', 'app_env.dart'));
+
+    final skipped = await tool(['init', '--no-app-env'], cwd: temp.path);
+    expect(skipped.exitCode, 0, reason: '${skipped.stdout}${skipped.stderr}');
+    expect(appEnv.existsSync(), isFalse);
+    expect(skipped.stdout, isNot(contains('AppEnv')));
+
+    final init = await tool(['init'], cwd: temp.path);
+    expect(init.exitCode, 0, reason: '${init.stdout}${init.stderr}');
+    expect(appEnv.existsSync(), isTrue);
+    expect(appEnv.readAsStringSync(), contains('static void ensureValid()'));
+    expect(init.stdout, contains("import 'package:demo_shop/app_env.dart';"));
+    expect(init.stdout, contains('AppEnv.ensureValid();'));
+  });
+
+  test('init writes no second AppEnv when lib/ already defines one', () async {
+    File(
+      p.join(temp.path, 'pubspec.yaml'),
+    ).writeAsStringSync('name: demo_shop\nversion: 3.0.1+12\n');
+    final own =
+        File(p.join(temp.path, 'lib', 'core', 'env', 'app_env_impl.dart'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            'class AppEnv {\n  static const baseUrl = "x";\n}\n',
+          );
+
+    for (final args in [
+      ['init'],
+      ['init', '--force'],
+    ]) {
+      final result = await tool(args, cwd: temp.path);
+      expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
+      expect(
+        result.stdout,
+        contains(
+          'skipped         lib/core/env/app_env_impl.dart (already defines AppEnv',
+        ),
+      );
+      expect(
+        result.stdout,
+        contains("import 'package:demo_shop/core/env/app_env_impl.dart';"),
+      );
+    }
+    expect(
+      File(p.join(temp.path, 'lib', 'app_env.dart')).existsSync(),
+      isFalse,
+    );
+    expect(own.readAsStringSync(), contains('static const baseUrl = "x";'));
+  });
+
   test('--list reads the project facts', () async {
     project();
     final result = await tool(['--list'], cwd: temp.path);

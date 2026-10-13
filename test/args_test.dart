@@ -558,6 +558,16 @@ void main() {
       ]);
     });
 
+    test('the init hint says AppEnv is written and how to skip it', () {
+      final text = usageText(initHint: true);
+      expect(text, contains('init [--force] [--dry-run] [--no-app-env]'));
+      expect(text, contains('AppEnv (lib/config/app_env.dart'));
+      expect(text, contains('--no-app-env skips AppEnv'));
+      expect(text, isNot(contains('[--app-env]')));
+      // Without the hint the text does not mention init at all.
+      expect(usageText(), isNot(contains('AppEnv')));
+    });
+
     test('a command wider than the column keeps one space before its note', () {
       final text = usageText(
         invocation: 'dart run some/very/long/folder/of/tools/build_it.dart',
@@ -597,19 +607,51 @@ void main() {
   group('the init command', () {
     InitArgs init(List<String> args) => parseArgs(args) as InitArgs;
 
-    test('plain init has every switch off', () {
+    test('plain init writes AppEnv and has --force and --dry-run off', () {
       final parsed = init(['init']);
       expect(parsed.force, isFalse);
       expect(parsed.dryRun, isFalse);
-      expect(parsed.appEnv, isFalse);
+      expect(parsed.appEnv, isTrue);
     });
 
-    test('the three switches, in any order and case', () {
-      final parsed = init(['INIT', '--app-env', '--dry-run', '--force']);
+    test('the switches, in any order and case', () {
+      final parsed = init(['INIT', '--no-app-env', '--dry-run', '--force']);
       expect(parsed.force, isTrue);
       expect(parsed.dryRun, isTrue);
-      expect(parsed.appEnv, isTrue);
+      expect(parsed.appEnv, isFalse);
       expect(init(['--force', 'init']).force, isTrue);
+      expect(init(['--no-app-env', 'init']).appEnv, isFalse);
+    });
+
+    test('--app-env is accepted and is the default', () {
+      expect(init(['init', '--app-env']).appEnv, isTrue);
+      final parsed = init(['INIT', '--app-env', '--dry-run', '--force']);
+      expect(parsed.appEnv, isTrue);
+      expect(parsed.dryRun, isTrue);
+      expect(parsed.force, isTrue);
+    });
+
+    test('--app-env and --no-app-env together are refused', () {
+      for (final args in [
+        ['init', '--app-env', '--no-app-env'],
+        ['--no-app-env', 'init', '--app-env'],
+      ]) {
+        expect(
+          _errorOf(args),
+          allOf(
+            contains('--app-env and --no-app-env contradict each other'),
+            contains('Example: dart run flutter_build_tools init --dry-run'),
+          ),
+          reason: args.join(' '),
+        );
+      }
+    });
+
+    test('a flag that takes no value says so for --no-app-env too', () {
+      expect(
+        _errorOf(['init', '--no-app-env=true']),
+        contains('--no-app-env does not take a value'),
+      );
     });
 
     test('--help wins, as everywhere', () {
@@ -634,7 +676,7 @@ void main() {
       expect(_errorOf(['init', '--list']), contains('--list takes no other'));
     });
 
-    test('--force and --app-env mean nothing for a build', () {
+    test('--force, --app-env and --no-app-env mean nothing for a build', () {
       expect(
         _errorOf(['apk', 'dev', '--force']),
         contains(
@@ -644,6 +686,19 @@ void main() {
       expect(
         _errorOf(['apk', 'dev', '--app-env']),
         contains('--app-env only applies to the init command'),
+      );
+      expect(
+        _errorOf(['apk', 'dev', '--no-app-env']),
+        contains(
+          '--no-app-env only applies to the init command (e.g. dart run flutter_build_tools init --no-app-env)',
+        ),
+      );
+    });
+
+    test('init names the flags it takes', () {
+      expect(
+        _errorOf(['init', '--debug']),
+        contains('it takes --force, --dry-run and --no-app-env'),
       );
     });
 

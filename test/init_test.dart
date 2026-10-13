@@ -1,11 +1,13 @@
 // The init command: what it writes, what it never overwrites, and that the
 // project builds right after it.
 import 'dart:convert';
+import 'dart:io' show FileSystemException;
 
 import 'package:test/test.dart';
 
 import 'package:flutter_build_tools/src/cli.dart';
 import 'package:flutter_build_tools/src/config.dart';
+import 'package:flutter_build_tools/src/init.dart';
 import 'package:flutter_build_tools/src/model.dart';
 import 'package:flutter_build_tools/src/profile.dart';
 import 'package:flutter_build_tools/src/runner.dart';
@@ -90,11 +92,12 @@ void main() {
         'config/env/local.json',
         'scripts/build.sh',
         'scripts/build.ps1',
+        'lib/app_env.dart',
       ]) {
         expect(out, contains(row('created', path)));
         expect(world.fs.fileExists(world.abs(path)), isTrue, reason: path);
       }
-      expect(out, contains('7 created, 0 overwritten, 0 skipped.'));
+      expect(out, contains('8 created, 0 overwritten, 0 skipped.'));
       expect(world.console.stderrText, isEmpty);
     });
 
@@ -282,7 +285,7 @@ void main() {
       );
       expect(
         out,
-        contains('Nothing to do: every file already exists (7 skipped).'),
+        contains('Nothing to do: every file already exists (8 skipped).'),
       );
     });
 
@@ -348,7 +351,7 @@ void main() {
         world.fs.readString(world.abs('scripts/build.sh')),
         contains('echo mine'),
       );
-      expect(out, contains('1 created, 0 overwritten, 6 skipped.'));
+      expect(out, contains('1 created, 0 overwritten, 7 skipped.'));
     });
   });
 
@@ -376,7 +379,9 @@ void main() {
       // local.json already said http://127.0.0.1: nothing was lost, no note.
       expect(out, contains(row('overwrote', 'config/env/local.json\n')));
       expect(out, contains(row('overwrote', 'scripts/build.sh')));
-      expect(out, contains('0 created, 7 overwritten, 0 skipped.'));
+      // init's own AppEnv text is replaced without a note.
+      expect(out, contains(row('overwrote', 'lib/app_env.dart\n')));
+      expect(out, contains('0 created, 8 overwritten, 0 skipped.'));
       expect(
         json(world, 'config/env/prod.json')['BASE_URL'],
         'https://prod.replace-me.invalid',
@@ -583,7 +588,8 @@ void main() {
         out,
         contains(row('would create', 'tool/build/build_config.json')),
       );
-      expect(out, contains('7 file(s) would be written, 0 skipped.'));
+      expect(out, contains(row('would create', 'lib/app_env.dart')));
+      expect(out, contains('8 file(s) would be written, 0 skipped.'));
     });
 
     test(
@@ -640,116 +646,1011 @@ void main() {
     });
   });
 
-  group('--app-env', () {
-    test('writes lib/app_env.dart when lib/config does not exist', () async {
-      final world = bare(lib: ['lib/main.dart']);
-      expect(
-        await run(world, ['init', '--app-env']),
-        0,
-        reason: world.console.allText,
+  group('AppEnv', () {
+    group('by default', () {
+      test(
+        'is written to lib/app_env.dart when lib/config does not exist',
+        () async {
+          final world = bare(lib: ['lib/main.dart']);
+          expect(await run(world, ['init']), 0, reason: world.console.allText);
+          final source = world.fs.readString(world.abs('lib/app_env.dart'));
+          expect(source, contains("String.fromEnvironment('APP_ENV')"));
+          expect(source, contains("String.fromEnvironment('BASE_URL')"));
+          expect(source, contains("String.fromEnvironment('BUILD_SHA')"));
+          expect(source, contains('class AppEnv'));
+          expect(
+            world.fs.fileExists(world.abs('lib/config/app_env.dart')),
+            isFalse,
+          );
+          expect(
+            world.console.stdoutText,
+            contains(row('created', 'lib/app_env.dart')),
+          );
+        },
       );
-      final source = world.fs.readString(world.abs('lib/app_env.dart'));
-      expect(source, contains("String.fromEnvironment('APP_ENV')"));
-      expect(source, contains("String.fromEnvironment('BASE_URL')"));
-      expect(source, contains('class AppEnv'));
-      expect(
-        world.fs.fileExists(world.abs('lib/config/app_env.dart')),
-        isFalse,
+
+      test(
+        'is written to lib/config/app_env.dart when lib/config exists',
+        () async {
+          final world = bare(lib: ['lib/main.dart', 'lib/config/theme.dart']);
+          expect(await run(world, ['init']), 0);
+          expect(
+            world.fs.fileExists(world.abs('lib/config/app_env.dart')),
+            isTrue,
+          );
+          expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+        },
+      );
+
+      test('has the members apps read and a startup guard for release', () async {
+        final world = bare();
+        await run(world, ['init']);
+        final source = world.fs.readString(world.abs('lib/app_env.dart'));
+        // The members of the 0.2.0 class, unchanged.
+        expect(
+          source,
+          contains(
+            "static const String name = String.fromEnvironment('APP_ENV');",
+          ),
+        );
+        expect(
+          source,
+          contains(
+            "static const String baseUrl = String.fromEnvironment('BASE_URL');",
+          ),
+        );
+        expect(
+          source,
+          contains(
+            "static const String buildSha = String.fromEnvironment('BUILD_SHA');",
+          ),
+        );
+        expect(
+          source,
+          contains(r"static String get summary => '$name $baseUrl $buildSha';"),
+        );
+        // The guard: release only, StateError, says how to build.
+        expect(
+          source,
+          contains(
+            "import 'package:flutter/foundation.dart' show kReleaseMode;",
+          ),
+        );
+        expect(source, contains('static void ensureValid() {'));
+        expect(source, contains('if (!kReleaseMode) return;'));
+        expect(source, contains('throw StateError('));
+        expect(source, contains('name.isEmpty'));
+        expect(source, contains('baseUrl.isEmpty'));
+        expect(
+          source,
+          contains('"dart run flutter_build_tools <platform> <env>"'),
+        );
+        expect(
+          source,
+          contains('--dart-define-from-file=config/env/<env>.json'),
+        );
+        // A plain `flutter run` keeps working, and the comment says how to
+        // pass the env file.
+        expect(
+          source,
+          contains('flutter run --dart-define-from-file=config/env/dev.json'),
+        );
+        expect(source, isNot(contains('@ENV_DIR@')));
+      });
+
+      test('names the env folder of the config in the file', () async {
+        final world = bare();
+        world.fs.put(
+          world.abs('tool/build/build_config.json'),
+          jsonEncode({'envDir': 'env'}),
+        );
+        await run(world, ['init']);
+        final source = world.fs.readString(world.abs('lib/app_env.dart'));
+        expect(source, contains('--dart-define-from-file=env/<env>.json'));
+        expect(source, contains('--dart-define-from-file=env/dev.json'));
+        expect(source, isNot(contains('config/env')));
+      });
+
+      for (final (label, dir, literal) in <(String, String, String)>[
+        ('a quote', "cfg/it's", r"cfg/it\'s"),
+        ('a dollar', r'cfg/$env', r'cfg/\$env'),
+        ('a dollar and braces', r'cfg/a${b}c', r'cfg/a\${b}c'),
+        ('a backslash', r'cfg\new', r'cfg\\new'),
+      ]) {
+        test('a folder name with $label is a valid literal', () async {
+          final world = bare();
+          world.fs.put(
+            world.abs('tool/build/build_config.json'),
+            jsonEncode({'envDir': dir}),
+          );
+          expect(await run(world, ['init']), 0, reason: world.console.allText);
+          final source = world.fs.readString(world.abs('lib/app_env.dart'));
+          // The string says the folder as it is; the comment shows it as is.
+          expect(
+            source,
+            contains(
+              "'--dart-define-from-file=$literal/<env>.json to flutter build.'",
+            ),
+          );
+          expect(
+            source,
+            contains('`flutter run --dart-define-from-file=$dir/dev.json`'),
+          );
+          expect(source, isNot(contains('@ENV_DIR')));
+        });
+      }
+
+      test(
+        'a line break in the folder name does not end the comment',
+        () async {
+          final world = bare();
+          world.fs.put(
+            world.abs('tool/build/build_config.json'),
+            jsonEncode({'envDir': 'cfg\nenv'}),
+          );
+          expect(await run(world, ['init']), 0, reason: world.console.allText);
+          final source = world.fs.readString(world.abs('lib/app_env.dart'));
+          expect(
+            source,
+            contains(r'--dart-define-from-file=cfg\nenv/<env>.json'),
+          );
+          expect(
+            source,
+            contains('`flutter run --dart-define-from-file=cfg env/dev.json`'),
+          );
+          for (final line in source.split('\n')) {
+            expect(
+              line.startsWith('///') ||
+                  !line.contains('--dart-define-from-file') ||
+                  line.trimLeft().startsWith("'"),
+              isTrue,
+              reason: line,
+            );
+          }
+        },
+      );
+
+      test('prints the main.dart lines and never edits main.dart', () async {
+        final world = bare(lib: ['lib/main.dart', 'lib/config/theme.dart']);
+        final mainBefore = world.fs.readString(world.abs('lib/main.dart'));
+        await run(world, ['init']);
+        expect(world.fs.readString(world.abs('lib/main.dart')), mainBefore);
+        final out = world.console.stdoutText;
+        expect(out, contains('init never edits lib/main.dart'));
+        expect(
+          out,
+          contains("import 'package:example_app/config/app_env.dart';"),
+        );
+        expect(out, contains('    AppEnv.ensureValid();'));
+        expect(out, contains('    debugPrint(AppEnv.summary);'));
+        expect(out, isNot(contains('note: lib/config/app_env.dart')));
+        // The guard comes before the log line, both after the import.
+        expect(
+          out.indexOf('AppEnv.ensureValid();'),
+          lessThan(out.indexOf('debugPrint(AppEnv.summary);')),
+        );
+      });
+
+      test(
+        'a dry run lists it, writes nothing and still shows the lines',
+        () async {
+          final world = bare(lib: ['lib/config/theme.dart']);
+          final before = world.fs.snapshot();
+          expect(await run(world, ['init', '--dry-run']), 0);
+          expect(world.fs.snapshot(), before);
+          final out = world.console.stdoutText;
+          expect(out, contains(row('would create', 'lib/config/app_env.dart')));
+          expect(
+            out,
+            contains("import 'package:example_app/config/app_env.dart';"),
+          );
+          expect(out, contains('AppEnv.ensureValid();'));
+        },
       );
     });
 
-    test('writes lib/config/app_env.dart when lib/config exists', () async {
-      final world = bare(lib: ['lib/main.dart', 'lib/config/theme.dart']);
-      expect(await run(world, ['init', '--app-env']), 0);
-      expect(world.fs.fileExists(world.abs('lib/config/app_env.dart')), isTrue);
-      expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+    group('--app-env', () {
+      test('is the default: the same files and the same output', () async {
+        final plain = bare(lib: ['lib/main.dart']);
+        final flagged = bare(lib: ['lib/main.dart']);
+        expect(await run(plain, ['init']), 0);
+        expect(await run(flagged, ['init', '--app-env']), 0);
+        expect(flagged.fs.snapshot(), plain.fs.snapshot());
+        expect(flagged.console.stdoutText, plain.console.stdoutText);
+        expect(flagged.console.stderrText, plain.console.stderrText);
+      });
+
+      test('with --dry-run and --force is the same as without it', () async {
+        for (final extra in [
+          ['--dry-run'],
+          ['--force', '--dry-run'],
+        ]) {
+          final plain = bare(lib: ['lib/main.dart']);
+          final flagged = bare(lib: ['lib/main.dart']);
+          expect(await run(plain, ['init', ...extra]), 0);
+          expect(await run(flagged, ['init', '--app-env', ...extra]), 0);
+          expect(
+            flagged.console.stdoutText,
+            plain.console.stdoutText,
+            reason: extra.join(' '),
+          );
+        }
+      });
     });
 
-    test('prints the main.dart one-liner and never edits main.dart', () async {
-      final world = bare(lib: ['lib/main.dart', 'lib/config/theme.dart']);
-      final mainBefore = world.fs.readString(world.abs('lib/main.dart'));
-      await run(world, ['init', '--app-env']);
-      expect(world.fs.readString(world.abs('lib/main.dart')), mainBefore);
-      final out = world.console.stdoutText;
-      expect(
-        out,
-        contains("import 'package:example_app/config/app_env.dart';"),
-      );
-      expect(out, contains('debugPrint(AppEnv.summary);'));
-      expect(out, contains('init never edits lib/main.dart'));
-    });
-
-    test(
-      'is not written again, also when it lives in the other place',
-      () async {
-        final world = bare(lib: ['lib/config/theme.dart', 'lib/app_env.dart']);
-        expect(await run(world, ['init', '--app-env']), 0);
+    group('--no-app-env', () {
+      test('writes no AppEnv and prints no main.dart lines', () async {
+        final world = bare(lib: ['lib/main.dart', 'lib/config/theme.dart']);
+        expect(
+          await run(world, ['init', '--no-app-env']),
+          0,
+          reason: world.console.allText,
+        );
+        expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
         expect(
           world.fs.fileExists(world.abs('lib/config/app_env.dart')),
           isFalse,
         );
+        final out = world.console.stdoutText;
+        expect(out, isNot(contains('AppEnv')));
+        expect(out, isNot(contains('app_env')));
+        expect(out, isNot(contains('debugPrint')));
+        expect(out, isNot(contains('lib/main.dart')));
+        expect(out, contains('7 created, 0 overwritten, 0 skipped.'));
+      });
+
+      test('a dry run lists no AppEnv either', () async {
+        final world = bare();
+        expect(await run(world, ['init', '--no-app-env', '--dry-run']), 0);
+        final out = world.console.stdoutText;
+        expect(out, isNot(contains('app_env')));
+        expect(out, contains('7 file(s) would be written, 0 skipped.'));
+      });
+
+      test(
+        'leaves an AppEnv that exists alone and says nothing of it',
+        () async {
+          final world = bare(lib: ['lib/app_env.dart']);
+          final before = world.fs.readString(world.abs('lib/app_env.dart'));
+          expect(await run(world, ['init', '--no-app-env', '--force']), 0);
+          expect(world.fs.readString(world.abs('lib/app_env.dart')), before);
+          final out = world.console.stdoutText;
+          expect(out, isNot(contains('app_env')));
+          expect(out, isNot(contains('AppEnv')));
+        },
+      );
+
+      test('does not look at lib/ for a class of that name', () async {
+        final world = bare();
+        final off = ListCountingFs();
         expect(
-          world.console.stdoutText,
+          await runBuildTool(['init', '--no-app-env'], world.envOn(off)),
+          0,
+        );
+        expect(off.listed, isNot(contains('/repo/lib')));
+        // The control: without the flag the folder is looked at.
+        final on = ListCountingFs();
+        expect(await runBuildTool(['init'], bare().envOn(on)), 0);
+        expect(on.listed, contains('/repo/lib'));
+      });
+
+      test(
+        'with --app-env is a usage error (exit 2) and writes nothing',
+        () async {
+          for (final args in [
+            ['init', '--app-env', '--no-app-env'],
+            ['init', '--no-app-env', '--app-env', '--dry-run'],
+          ]) {
+            final world = bare();
+            final before = world.fs.snapshot();
+            expect(await run(world, args), 2, reason: args.join(' '));
+            expect(
+              world.console.stderrText,
+              contains('--app-env and --no-app-env contradict each other'),
+            );
+            expect(world.fs.snapshot(), before);
+          }
+        },
+      );
+    });
+
+    group('one that exists', () {
+      test(
+        'is not written again, also when it lives in the other place',
+        () async {
+          final world = bare(lib: ['lib/config/theme.dart'])
+            ..fs.put(world0('lib/app_env.dart'), await initsOwnText());
+          expect(await run(world, ['init']), 0);
+          expect(
+            world.fs.fileExists(world.abs('lib/config/app_env.dart')),
+            isFalse,
+          );
+          expect(
+            world.console.stdoutText,
+            contains(
+              'skipped         lib/app_env.dart (exists; --force overwrites it)',
+            ),
+          );
+        },
+      );
+
+      test(
+        'the main.dart import names the copy that exists in the other place',
+        () async {
+          final world = bare(lib: ['lib/config/theme.dart'])
+            ..fs.put(world0('lib/app_env.dart'), await initsOwnText());
+          expect(await run(world, ['init']), 0);
+          final out = world.console.stdoutText;
+          expect(out, contains("import 'package:example_app/app_env.dart';"));
+          expect(out, isNot(contains('config/app_env.dart')));
+        },
+      );
+
+      test(
+        '--force replaces the copy that exists, it never adds a second class',
+        () async {
+          final world = bare(lib: ['lib/config/theme.dart'])
+            ..fs.put(world0('lib/app_env.dart'), _appEnv020);
+          expect(await run(world, ['init', '--force']), 0);
+          expect(
+            world.fs.fileExists(world.abs('lib/config/app_env.dart')),
+            isFalse,
+          );
+          expect(
+            world.fs.readString(world.abs('lib/app_env.dart')),
+            contains('static void ensureValid()'),
+          );
+          final out = world.console.stdoutText;
+          expect(out, contains(row('overwrote', 'lib/app_env.dart\n')));
+          expect(out, contains("import 'package:example_app/app_env.dart';"));
+        },
+      );
+
+      test(
+        'the copy in lib/config/ is the one used when lib/ has none',
+        () async {
+          final world = bare()
+            ..fs.put(world0('lib/config/app_env.dart'), await initsOwnText());
+          expect(await run(world, ['init']), 0);
+          expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+          expect(
+            world.console.stdoutText,
+            contains("import 'package:example_app/config/app_env.dart';"),
+          );
+        },
+      );
+
+      test('init\'s own text is kept, and the lines are shown again', () async {
+        final world = bare(lib: ['lib/main.dart']);
+        await run(world, ['init']);
+        final before = world.fs.snapshot();
+        world.console.outLines.clear();
+        expect(await run(world, ['init']), 0);
+        expect(world.fs.snapshot(), before);
+        final out = world.console.stdoutText;
+        expect(
+          out,
           contains(
             'skipped         lib/app_env.dart (exists; --force overwrites it)',
           ),
         );
-      },
-    );
+        expect(out, contains('AppEnv.ensureValid();'));
+        expect(out, contains('debugPrint(AppEnv.summary);'));
+        expect(out, isNot(contains('note: lib/app_env.dart')));
+      });
 
-    test(
-      'the main.dart import names the copy that exists in the other place',
-      () async {
-        final world = bare(lib: ['lib/config/theme.dart', 'lib/app_env.dart']);
-        expect(await run(world, ['init', '--app-env']), 0);
+      test(
+        'with --force init\'s own text is replaced without a note',
+        () async {
+          final world = bare();
+          await run(world, ['init']);
+          world.console.outLines.clear();
+          expect(await run(world, ['init', '--force']), 0);
+          final out = world.console.stdoutText;
+          expect(out, contains(row('overwrote', 'lib/app_env.dart\n')));
+          expect(out, isNot(contains('lib/app_env.dart (')));
+        },
+      );
+
+      group('from 0.2.0', () {
+        TestWorld before() =>
+            bare(lib: ['lib/config/theme.dart'])
+              ..fs.put(world0('lib/config/app_env.dart'), _appEnv020);
+
+        test('is kept; the lines leave out ensureValid and say why', () async {
+          final world = before();
+          expect(await run(world, ['init']), 0);
+          expect(
+            world.fs.readString(world.abs('lib/config/app_env.dart')),
+            _appEnv020,
+          );
+          final out = world.console.stdoutText;
+          expect(
+            out,
+            contains("import 'package:example_app/config/app_env.dart';"),
+          );
+          expect(out, contains('debugPrint(AppEnv.summary);'));
+          expect(out, isNot(contains('AppEnv.ensureValid();')));
+          expect(
+            out,
+            contains(
+              'note: lib/config/app_env.dart was written by an earlier init and has no ensureValid()',
+            ),
+          );
+        });
+
+        test('--force updates it and does not call it custom', () async {
+          final world = before();
+          expect(await run(world, ['init', '--force']), 0);
+          final out = world.console.stdoutText;
+          expect(out, contains(row('overwrote', 'lib/config/app_env.dart\n')));
+          expect(
+            world.fs.readString(world.abs('lib/config/app_env.dart')),
+            contains('static void ensureValid()'),
+          );
+          expect(out, contains('AppEnv.ensureValid();'));
+          expect(out, isNot(contains('earlier init')));
+        });
+
+        test('deleting it and running init again is the upgrade', () async {
+          final world = before();
+          world.fs.deleteFile(world.abs('lib/config/app_env.dart'));
+          expect(await run(world, ['init']), 0);
+          expect(
+            world.fs.readString(world.abs('lib/config/app_env.dart')),
+            contains('static void ensureValid()'),
+          );
+        });
+      });
+
+      test('a file of your own at that place gets the "your own" note', () async {
+        final world = bare(lib: ['lib/config/theme.dart'])
+          ..fs.put(
+            world0('lib/config/app_env.dart'),
+            "class AppEnv {\n  static const flavor = 'x';\n}\n",
+          );
+        expect(await run(world, ['init']), 0);
         final out = world.console.stdoutText;
-        expect(out, contains("import 'package:example_app/app_env.dart';"));
-        expect(out, isNot(contains('config/app_env.dart')));
-      },
-    );
+        expect(
+          out,
+          contains(
+            'note: lib/config/app_env.dart is your own AppEnv and init did not change it. It has no ensureValid()',
+          ),
+        );
+        expect(out, isNot(contains('AppEnv.ensureValid();')));
+        expect(out, isNot(contains('debugPrint')));
+      });
+    });
 
-    test(
-      '--force replaces the copy that exists, it never adds a second class',
-      () async {
-        final world = bare(lib: ['lib/config/theme.dart', 'lib/app_env.dart']);
-        expect(await run(world, ['init', '--force', '--app-env']), 0);
+    group('a file of the project at that place', () {
+      const custom = '''
+import 'package:flutter/foundation.dart';
+
+class AppEnv {
+  static const baseUrl = String.fromEnvironment('BASE_URL');
+  static const sentryDsn = 'https://key@sentry.example/1';
+}
+''';
+
+      String importOf(String path) =>
+          "import 'package:example_app/${path.substring('lib/'.length)}';";
+
+      for (final (label, lib, path) in <(String, List<String>, String)>[
+        (
+          'lib/config/app_env.dart',
+          ['lib/main.dart'],
+          'lib/config/app_env.dart',
+        ),
+        (
+          'lib/app_env.dart next to lib/config/',
+          ['lib/config/theme.dart'],
+          'lib/app_env.dart',
+        ),
+        ('lib/app_env.dart', ['lib/main.dart'], 'lib/app_env.dart'),
+      ]) {
+        group('a class $label', () {
+          test('is kept by init --force and named in the import', () async {
+            final world = bare(lib: lib)..fs.put(world0(path), custom);
+            final before = world.fs.snapshot();
+            expect(
+              await run(world, ['init', '--force']),
+              0,
+              reason: world.console.allText,
+            );
+            expect(world.fs.readString(world.abs(path)), custom);
+            final added = {...world.fs.files.keys}.difference({...before.keys});
+            expect(
+              added.where((f) => f.endsWith('.dart')),
+              isEmpty,
+              reason: 'no Dart file was added',
+            );
+            final out = world.console.stdoutText;
+            expect(
+              out,
+              contains(
+                row(
+                  'skipped',
+                  '$path (already defines AppEnv; init writes no second one)',
+                ),
+              ),
+            );
+            expect(out, isNot(contains('overwrote         $path')));
+            expect(out, contains(importOf(path)));
+            // Only the class is kept: the rest of init still ran.
+            expect(out, contains(row('created', 'config/env/dev.json')));
+          });
+
+          test('is not listed as overwritten by --force --dry-run', () async {
+            final world = bare(lib: lib)..fs.put(world0(path), custom);
+            final before = world.fs.snapshot();
+            expect(await run(world, ['init', '--force', '--dry-run']), 0);
+            expect(world.fs.snapshot(), before);
+            final out = world.console.stdoutText;
+            expect(out, isNot(contains('would overwrite $path')));
+            expect(out, isNot(contains('custom content replaced')));
+            expect(out, contains('skipped         $path (already defines'));
+          });
+        });
+      }
+
+      for (final (label, source) in <(String, String)>[
+        ('a constant', 'const appEnvName = "x";\n'),
+        ('an enum of another name', 'enum AppEnvironment { dev, prod }\n'),
+        ('an empty file', ''),
+      ]) {
+        test('$label is kept: no import, no "your own AppEnv"', () async {
+          final world = bare(lib: ['lib/config/theme.dart'])
+            ..fs.put(world0('lib/config/app_env.dart'), source);
+          for (final args in [
+            ['init'],
+            ['init', '--force'],
+            ['init', '--force', '--dry-run'],
+          ]) {
+            world.console.outLines.clear();
+            expect(await run(world, args), 0, reason: args.join(' '));
+            expect(
+              world.fs.readString(world.abs('lib/config/app_env.dart')),
+              source,
+            );
+            final out = world.console.stdoutText;
+            expect(
+              out,
+              contains(
+                row(
+                  'skipped',
+                  'lib/config/app_env.dart (exists but defines no AppEnv; init does not replace it, not even with --force)',
+                ),
+              ),
+            );
+            expect(
+              out,
+              contains(
+                'note: lib/config/app_env.dart exists but defines no AppEnv, so init wrote none',
+              ),
+            );
+            expect(out, isNot(contains('import \'package:')));
+            expect(out, isNot(contains('your own AppEnv')));
+            expect(out, isNot(contains('AppEnv.ensureValid();')));
+            expect(out, isNot(contains('would overwrite lib/')));
+          }
+          expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+        });
+      }
+
+      test('a file that is not text is kept and says so', () async {
+        final world = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/app_env.dart'), [0xC3, 0x28, 0xFF]);
+        expect(await run(world, ['init', '--force']), 0);
+        expect(world.fs.files[world0('lib/app_env.dart')], [0xC3, 0x28, 0xFF]);
+        expect(
+          world.console.stdoutText,
+          contains(
+            'note: lib/app_env.dart exists but cannot be read as text, so init wrote none',
+          ),
+        );
+      });
+
+      test('a class elsewhere is used when the file there has none', () async {
+        final world = bare(lib: ['lib/config/theme.dart'])
+          ..fs.put(
+            world0('lib/config/app_env.dart'),
+            'enum AppEnvironment {}\n',
+          )
+          ..fs.put(world0('lib/core/env.dart'), custom);
+        expect(await run(world, ['init']), 0);
+        final out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            row(
+              'skipped',
+              'lib/core/env.dart (already defines AppEnv; init writes no second one)',
+            ),
+          ),
+        );
+        expect(out, contains(importOf('lib/core/env.dart')));
+        expect(out, isNot(contains('config/app_env.dart')));
+      });
+
+      test('a class at the other place wins over one found elsewhere', () async {
+        final world = bare(lib: ['lib/config/theme.dart'])
+          ..fs.put(world0('lib/app_env.dart'), custom)
+          ..fs.put(world0('lib/core/env.dart'), custom);
+        expect(await run(world, ['init']), 0);
+        final out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            row(
+              'skipped',
+              'lib/app_env.dart (already defines AppEnv; init writes no second one)',
+            ),
+          ),
+        );
+        expect(out, contains(importOf('lib/app_env.dart')));
+        expect(out, isNot(contains('core/env.dart')));
+      });
+    });
+
+    group('with CRLF line endings', () {
+      String crlf(String text) => text.replaceAll('\n', '\r\n');
+
+      test('init\'s own text is still its own', () async {
+        final own = crlf(await initsOwnText());
+        final world = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/app_env.dart'), own);
+        expect(await run(world, ['init']), 0);
+        expect(world.fs.readString(world.abs('lib/app_env.dart')), own);
+        var out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            'skipped         lib/app_env.dart (exists; --force overwrites it)',
+          ),
+        );
+        expect(out, contains('AppEnv.ensureValid();'));
+        expect(out, isNot(contains('your own AppEnv')));
+        expect(out, isNot(contains('earlier init')));
+
+        world.console.outLines.clear();
+        expect(await run(world, ['init', '--force']), 0);
+        out = world.console.stdoutText;
+        expect(out, contains(row('overwrote', 'lib/app_env.dart\n')));
+        expect(out, isNot(contains('custom content replaced')));
+      });
+
+      test('the 0.2.0 text is still the one of an earlier init', () async {
+        final world = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/app_env.dart'), crlf(_appEnv020));
+        expect(await run(world, ['init']), 0);
+        var out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            'note: lib/app_env.dart was written by an earlier init and has no ensureValid()',
+          ),
+        );
+        expect(out, isNot(contains('your own AppEnv')));
+
+        world.console.outLines.clear();
+        expect(await run(world, ['init', '--force']), 0);
+        out = world.console.stdoutText;
+        expect(out, contains(row('overwrote', 'lib/app_env.dart\n')));
+        expect(out, isNot(contains('custom content replaced')));
+        expect(
+          world.fs.readString(world.abs('lib/app_env.dart')),
+          contains('static void ensureValid()'),
+        );
+      });
+
+      test('a wrapper script is not custom content because of it', () async {
+        final first = bare();
+        await run(first, ['init']);
+        final script = first.fs.readString(first.abs('scripts/build.sh'));
+        final world = bare()..fs.put(world0('scripts/build.sh'), crlf(script));
+        expect(await run(world, ['init', '--force']), 0);
+        final out = world.console.stdoutText;
+        expect(out, contains(row('overwrote', 'scripts/build.sh\n')));
+        expect(out, isNot(contains('custom content replaced')));
+      });
+    });
+
+    group('one the project defines elsewhere', () {
+      const own = '''
+import 'package:flutter/foundation.dart';
+
+class AppEnv {
+  static const baseUrl = String.fromEnvironment('BASE_URL');
+  static String get summary => baseUrl;
+  static void ensureValid() {}
+}
+''';
+
+      TestWorld defined(String path, String source, {List<String>? lib}) =>
+          bare(lib: lib ?? ['lib/main.dart'])..fs.put(world0(path), source);
+
+      test('is not duplicated: init writes none and names the file', () async {
+        final world = defined('lib/core/env.dart', own);
+        expect(await run(world, ['init']), 0, reason: world.console.allText);
+        expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
         expect(
           world.fs.fileExists(world.abs('lib/config/app_env.dart')),
           isFalse,
-        );
-        expect(
-          world.fs.readString(world.abs('lib/app_env.dart')),
-          contains('class AppEnv'),
         );
         final out = world.console.stdoutText;
         expect(
           out,
           contains(
-            row('overwrote', 'lib/app_env.dart (custom content replaced)'),
+            row(
+              'skipped',
+              'lib/core/env.dart (already defines AppEnv; init writes no second one)',
+            ),
           ),
         );
-        expect(out, contains("import 'package:example_app/app_env.dart';"));
-      },
-    );
+        expect(out, contains('7 created, 0 overwritten, 1 skipped.'));
+      });
 
-    test(
-      'the copy in lib/config/ is the one used when lib/ has none',
-      () async {
-        final world = bare(lib: ['lib/config/app_env.dart']);
-        expect(await run(world, ['init', '--app-env']), 0);
+      test('the main.dart import is the file of the project', () async {
+        final world = defined('lib/core/env.dart', own);
+        await run(world, ['init']);
+        final out = world.console.stdoutText;
+        expect(out, contains("import 'package:example_app/core/env.dart';"));
+        expect(out, isNot(contains('app_env.dart')));
+        // It has both members, so both lines are shown.
+        expect(out, contains('AppEnv.ensureValid();'));
+        expect(out, contains('debugPrint(AppEnv.summary);'));
+        expect(out, isNot(contains('note: lib/core/env.dart')));
+      });
+
+      test(
+        'only the members it has are shown, with a note for the guard',
+        () async {
+          final world = defined(
+            'lib/core/env.dart',
+            'class AppEnv {\n  static const baseUrl = "x";\n}\n',
+          );
+          await run(world, ['init']);
+          final out = world.console.stdoutText;
+          expect(out, contains("import 'package:example_app/core/env.dart';"));
+          expect(out, isNot(contains('AppEnv.ensureValid();')));
+          expect(out, isNot(contains('AppEnv.summary')));
+          expect(
+            out,
+            contains(
+              'note: lib/core/env.dart is your own AppEnv and init did not change it. It has no ensureValid()',
+            ),
+          );
+        },
+      );
+
+      test('--force does not touch it and writes no second one', () async {
+        final world = defined('lib/core/env.dart', own);
+        final before = world.fs.snapshot();
+        expect(await run(world, ['init', '--force']), 0);
+        expect(world.fs.readString(world.abs('lib/core/env.dart')), own);
         expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+        final files = {...world.fs.files.keys}.difference({...before.keys});
+        expect(
+          files.where((f) => f.endsWith('.dart')),
+          isEmpty,
+          reason: 'no Dart file was added',
+        );
         expect(
           world.console.stdoutText,
+          contains(
+            row(
+              'skipped',
+              'lib/core/env.dart (already defines AppEnv; init writes no second one)',
+            ),
+          ),
+        );
+      });
+
+      test('a dry run lists it as skipped', () async {
+        final world = defined('lib/core/env.dart', own);
+        final before = world.fs.snapshot();
+        expect(await run(world, ['init', '--dry-run']), 0);
+        expect(world.fs.snapshot(), before);
+        final out = world.console.stdoutText;
+        expect(out, contains('skipped         lib/core/env.dart'));
+        expect(out, isNot(contains('would create lib/app_env.dart')));
+        expect(out, contains('7 file(s) would be written, 1 skipped.'));
+      });
+
+      test('a second init says there is nothing to do', () async {
+        final world = defined('lib/core/env.dart', own);
+        await run(world, ['init']);
+        final before = world.fs.snapshot();
+        world.console.outLines.clear();
+        expect(await run(world, ['init']), 0);
+        expect(world.fs.snapshot(), before);
+        expect(
+          world.console.stdoutText,
+          contains('Nothing to do: every file already exists (8 skipped).'),
+        );
+      });
+
+      for (final (label, source) in <(String, String)>[
+        ('abstract final class', 'abstract final class AppEnv {}'),
+        ('sealed class', 'sealed class AppEnv {}'),
+        ('base mixin class', 'base mixin class AppEnv {}'),
+        ('class with a type parameter', 'class AppEnv<T> {}'),
+        ('class with extends', 'class AppEnv extends Base {}'),
+        ('enum', 'enum AppEnv { dev, prod }'),
+        ('mixin', 'mixin AppEnv {}'),
+        ('extension type', 'extension type const AppEnv(String v) {}'),
+        ('typedef', 'typedef AppEnv = Map<String, String>;'),
+        ('indented', '  class AppEnv {}'),
+      ]) {
+        test('$label counts as one', () async {
+          final world = defined('lib/env/settings.dart', '$source\n');
+          expect(await run(world, ['init']), 0);
+          expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
+          expect(
+            world.console.stdoutText,
+            contains("import 'package:example_app/env/settings.dart';"),
+          );
+        });
+      }
+
+      for (final (label, source) in <(String, String)>[
+        ('a class of another name', 'class AppEnvironment {}'),
+        ('a longer name', 'class AppEnv2 {}\nclass AppEnv_x {}'),
+        ('a dollar in the name', r'class AppEnv$x {}'),
+        ('a comment', '// class AppEnv {}\n/// class AppEnv {}'),
+        ('a use', 'final e = AppEnv();\nvoid f(AppEnv e) {}'),
+        ('a string', "const s = 'class AppEnv';"),
+      ]) {
+        test('$label does not', () async {
+          final world = defined('lib/env/settings.dart', '$source\n');
+          expect(await run(world, ['init']), 0);
+          expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isTrue);
+          expect(world.console.stdoutText, isNot(contains('already defines')));
+        });
+      }
+
+      test('only Dart files under lib/ are looked at', () async {
+        final world = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/notes.md'), 'class AppEnv {}\n')
+          ..fs.put(world0('test/app_env_test.dart'), 'class AppEnv {}\n')
+          ..fs.put(world0('tool/env.dart'), 'class AppEnv {}\n')
+          ..fs.put(world0('example/lib/env.dart'), 'class AppEnv {}\n');
+        expect(await run(world, ['init']), 0);
+        expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isTrue);
+        expect(world.console.stdoutText, isNot(contains('already defines')));
+      });
+
+      test('a file that cannot be read is passed over', () async {
+        final world = defined('lib/core/env.dart', own)
+          ..fs.put(world0('lib/a_broken.dart'), [0xC3, 0x28, 0xFF]);
+        expect(await run(world, ['init']), 0, reason: world.console.allText);
+        expect(
+          world.console.stdoutText,
+          contains("import 'package:example_app/core/env.dart';"),
+        );
+        // And when only the broken file is there, init still writes its own.
+        final alone = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/a_broken.dart'), [0xC3, 0x28, 0xFF]);
+        expect(await run(alone, ['init']), 0, reason: alone.console.allText);
+        expect(alone.fs.fileExists(alone.abs('lib/app_env.dart')), isTrue);
+      });
+
+      test('a lib/ folder that cannot be listed does not fail init, and '
+          'says what could not be checked', () async {
+        final world = bare(lib: ['lib/main.dart']);
+        final fs = UnlistableFs();
+        expect(await runBuildTool(['init'], world.envOn(fs)), 0);
+        expect(fs.fileExists('/repo/lib/app_env.dart'), isTrue);
+        final out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            'note: lib/ could not be read completely (a folder is not readable), so init could not check whether the project already defines an AppEnv. If it does, delete lib/app_env.dart and use that class; give --no-app-env to skip the class.',
+          ),
+        );
+        // The note comes after the lines for main.dart.
+        expect(
+          out.indexOf('AppEnv.ensureValid();'),
+          lessThan(out.indexOf('could not be read completely')),
+        );
+      });
+
+      test('a dry run on a lib/ that cannot be listed says it too', () async {
+        final world = bare(lib: ['lib/main.dart']);
+        final fs = UnlistableFs();
+        expect(await runBuildTool(['init', '--dry-run'], world.envOn(fs)), 0);
+        expect(
+          world.console.stdoutText,
+          contains('lib/ could not be read completely'),
+        );
+        expect(fs.fileExists('/repo/lib/app_env.dart'), isFalse);
+      });
+
+      test('a complete listing, or no class to write, says nothing', () async {
+        final complete = bare(lib: ['lib/main.dart']);
+        expect(await run(complete, ['init']), 0);
+        expect(
+          complete.console.stdoutText,
+          isNot(contains('could not be read completely')),
+        );
+
+        // init's own text at its place: nothing is written, so nothing is
+        // missed, and the folder is not even listed.
+        final own = bare(lib: ['lib/main.dart'])
+          ..fs.put(world0('lib/app_env.dart'), await initsOwnText());
+        final ownFs = UnlistableFs();
+        expect(await runBuildTool(['init'], own.envOn(ownFs)), 0);
+        expect(
+          own.console.stdoutText,
+          isNot(contains('could not be read completely')),
+        );
+
+        final off = bare(lib: ['lib/main.dart']);
+        expect(
+          await runBuildTool([
+            'init',
+            '--no-app-env',
+          ], off.envOn(UnlistableFs())),
+          0,
+        );
+        expect(
+          off.console.stdoutText,
+          isNot(contains('could not be read completely')),
+        );
+      });
+
+      test('a copy in the usual place wins over another file', () async {
+        final world = defined('lib/core/env.dart', own)
+          ..fs.put(world0('lib/config/app_env.dart'), await initsOwnText());
+        expect(await run(world, ['init']), 0);
+        final out = world.console.stdoutText;
+        expect(
+          out,
+          contains(
+            'skipped         lib/config/app_env.dart (exists; --force overwrites it)',
+          ),
+        );
+        expect(
+          out,
           contains("import 'package:example_app/config/app_env.dart';"),
         );
-      },
-    );
+        expect(out, isNot(contains('already defines')));
+      });
 
-    test('is not written without the flag', () async {
-      final world = bare(lib: ['lib/main.dart']);
-      await run(world, ['init']);
-      expect(world.fs.fileExists(world.abs('lib/app_env.dart')), isFalse);
-      expect(world.console.stdoutText, isNot(contains('debugPrint')));
+      test(
+        'the first of several files, in path order, is the one named',
+        () async {
+          // The real disk lists in no particular order: the choice must not
+          // depend on it.
+          final world = defined('lib/z/env.dart', own)
+            ..fs.put(world0('lib/a/env.dart'), own);
+          final fs = ReversedListFs();
+          expect(await runBuildTool(['init'], world.envOn(fs)), 0);
+          expect(
+            world.console.stdoutText,
+            contains("import 'package:example_app/a/env.dart';"),
+          );
+        },
+      );
+    });
+
+    group('the class text', () {
+      test('declaresAppEnv looks at declarations, not at mentions', () {
+        expect(declaresAppEnv('class AppEnv {}'), isTrue);
+        expect(declaresAppEnv('// x\nfinal class AppEnv {\n}'), isTrue);
+        expect(declaresAppEnv('class AppEnvironment {}'), isFalse);
+        expect(declaresAppEnv('// class AppEnv {}'), isFalse);
+        expect(declaresAppEnv(''), isFalse);
+      });
+
+      test('the options of the API write it unless told not to', () async {
+        final on = bare();
+        expect(await runInit(on.env, const InitOptions()), 0);
+        expect(on.fs.fileExists(on.abs('lib/app_env.dart')), isTrue);
+        final off = bare();
+        expect(await runInit(off.env, const InitOptions(appEnv: false)), 0);
+        expect(off.fs.fileExists(off.abs('lib/app_env.dart')), isFalse);
+      });
     });
   });
 
@@ -963,6 +1864,41 @@ void main() {
       expect(retry.fileExists('/repo/scripts/build.sh'), isTrue);
     });
 
+    test('of the AppEnv file also says how to do without the class', () async {
+      final world = bare();
+      final fs = DenyingFs((path) => path.endsWith('/lib/app_env.dart'));
+      expect(await runBuildTool(['init'], world.envOn(fs)), 1);
+      final err = world.console.stderrText;
+      expect(
+        err,
+        contains('could not write lib/app_env.dart: Permission denied.'),
+      );
+      expect(err, contains('Already written: tool/build/build_config.json'));
+      expect(err, contains('run init again'));
+      expect(
+        err,
+        contains('Or run init --no-app-env to skip the AppEnv class.'),
+      );
+      // The way out works: the class was the only file that was missing.
+      world.console.errLines.clear();
+      expect(
+        await runBuildTool(['init', '--no-app-env'], world.envOn(fs)),
+        0,
+        reason: world.console.allText,
+      );
+      expect(fs.fileExists('/repo/lib/app_env.dart'), isFalse);
+      expect(fs.fileExists('/repo/scripts/build.ps1'), isTrue);
+    });
+
+    test('of another file does not mention the AppEnv class', () async {
+      final world = bare();
+      final fs = DenyingFs((path) => path.contains('/scripts/'));
+      expect(await runBuildTool(['init'], world.envOn(fs)), 1);
+      final err = world.console.stderrText;
+      expect(err, contains('could not write scripts/build.sh'));
+      expect(err, isNot(contains('--no-app-env')));
+    });
+
     test('before anything is written it says so', () async {
       final world = bare();
       final fs = DenyingFs((path) => path.contains('/tool/'));
@@ -1077,6 +2013,14 @@ void main() {
         ['apk', 'dev', '--app-env'],
         '--app-env only applies to the init command',
       ),
+      (
+        ['apk', 'dev', '--no-app-env'],
+        '--no-app-env only applies to the init command',
+      ),
+      (
+        ['init', '--app-env', '--no-app-env'],
+        '--app-env and --no-app-env contradict each other',
+      ),
     ]) {
       test('${args.join(' ')} is a usage error (exit 2)', () async {
         final world = bare();
@@ -1096,6 +2040,19 @@ void main() {
       expect(world.fs.fileExists(world.abs('scripts/build.sh')), isFalse);
     });
 
+    test(
+      '--help shows init with --no-app-env and says AppEnv is written',
+      () async {
+        final world = bare();
+        expect(await run(world, ['--help']), 0);
+        final out = world.console.stdoutText;
+        expect(out, contains('init [--force] [--dry-run] [--no-app-env]'));
+        expect(out, contains('--no-app-env skips AppEnv'));
+        expect(out, contains('lib/config/app_env.dart'));
+        expect(out, isNot(contains('[--app-env]')));
+      },
+    );
+
     test('INIT is accepted in any case', () async {
       final world = bare();
       expect(await run(world, ['INIT', '--dry-run']), 0);
@@ -1105,3 +2062,63 @@ void main() {
 
 /// `/repo/<relative>` for the tests that build a path before the world exists.
 String world0(String relative) => '/repo/$relative';
+
+/// The `AppEnv` text of this version, as `init` writes it for `config/env`.
+Future<String> initsOwnText() async {
+  final world = bare();
+  expect(await run(world, ['init']), 0);
+  return world.fs.readString(world.abs('lib/app_env.dart'));
+}
+
+/// The `AppEnv` text that `init --app-env` of 0.2.0 wrote: no startup guard.
+const String _appEnv020 =
+    r'''/// Build-time settings, compiled in by `flutter_build_tools` from the env file
+/// of the environment that was built (`--dart-define-from-file`).
+///
+/// Running from the IDE or `flutter run` has no env file unless you pass one:
+/// `flutter run --dart-define-from-file=config/env/dev.json`.
+class AppEnv {
+  AppEnv._();
+
+  /// `dev`, `preprod`, `prod` or `local`; empty when no env file was passed.
+  static const String name = String.fromEnvironment('APP_ENV');
+
+  /// The API origin of this environment; empty when no env file was passed.
+  static const String baseUrl = String.fromEnvironment('BASE_URL');
+
+  /// The short git commit of the build (`-dirty` when the tree had changes).
+  static const String buildSha = String.fromEnvironment('BUILD_SHA');
+
+  /// One line for a log: `dev https://... 1a2b3c4`.
+  static String get summary => '$name $baseUrl $buildSha';
+}
+''';
+
+/// Remembers every folder that was listed.
+class ListCountingFs extends MemoryFs {
+  final List<String> listed = [];
+
+  @override
+  List<String> listFiles(String dir, {bool recursive = false}) {
+    listed.add(dir);
+    return super.listFiles(dir, recursive: recursive);
+  }
+}
+
+/// A `lib/` folder that the operating system refuses to list.
+class UnlistableFs extends MemoryFs {
+  @override
+  List<String> listFiles(String dir, {bool recursive = false}) {
+    if (dir.endsWith('/lib')) {
+      throw FileSystemException('Directory listing failed', dir);
+    }
+    return super.listFiles(dir, recursive: recursive);
+  }
+}
+
+/// Lists files in reverse path order, as a disk may.
+class ReversedListFs extends MemoryFs {
+  @override
+  List<String> listFiles(String dir, {bool recursive = false}) =>
+      super.listFiles(dir, recursive: recursive).reversed.toList();
+}

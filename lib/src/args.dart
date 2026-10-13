@@ -26,11 +26,7 @@ class ListArgs extends ParsedArgs {
 /// `init`: write the files a project needs (see `runInit`).
 class InitArgs extends ParsedArgs {
   /// Creates the case.
-  const InitArgs({
-    this.force = false,
-    this.dryRun = false,
-    this.appEnv = false,
-  });
+  const InitArgs({this.force = false, this.dryRun = false, this.appEnv = true});
 
   /// `--force`: overwrite files that already exist.
   final bool force;
@@ -38,7 +34,8 @@ class InitArgs extends ParsedArgs {
   /// `--dry-run`: say what would be written, write nothing.
   final bool dryRun;
 
-  /// `--app-env`: also write the small `AppEnv` class.
+  /// Write the small `AppEnv` class. True by default; `--no-app-env` makes it
+  /// false, and `--app-env` is accepted and changes nothing.
   final bool appEnv;
 }
 
@@ -66,6 +63,7 @@ const Set<String> _flags = {
   '-h',
   '--force',
   '--app-env',
+  '--no-app-env',
 };
 
 /// The word of the one command that is not a build.
@@ -76,6 +74,7 @@ const Set<String> _initFlags = {
   '--force',
   '--dry-run',
   '--app-env',
+  '--no-app-env',
   '--help',
   '-h',
 };
@@ -165,7 +164,7 @@ ParsedArgs parseArgs(
   if (positionals.isNotEmpty && positionals.first.toLowerCase() == initWord) {
     return _parseInit(positionals, flags, values, invocation);
   }
-  for (final flag in const ['--force', '--app-env']) {
+  for (final flag in const ['--force', '--app-env', '--no-app-env']) {
     if (flags.contains(flag)) {
       throw UsageError(
         '$flag only applies to the init command (e.g. $invocation init $flag).',
@@ -216,21 +215,25 @@ ParsedArgs _parseInit(
       'init takes no platform, environment or mode (got "${positionals.skip(1).join('", "')}"). $example',
     );
   }
+  const takes = 'it takes --force, --dry-run and --no-app-env';
   if (values.isNotEmpty) {
     throw UsageError(
-      'init does not take ${values.keys.first}; it takes --force, --dry-run and --app-env. $example',
+      'init does not take ${values.keys.first}; $takes. $example',
     );
   }
   final other = flags.where((flag) => !_initFlags.contains(flag));
   if (other.isNotEmpty) {
+    throw UsageError('init does not take ${other.first}; $takes. $example');
+  }
+  if (flags.contains('--app-env') && flags.contains('--no-app-env')) {
     throw UsageError(
-      'init does not take ${other.first}; it takes --force, --dry-run and --app-env. $example',
+      '--app-env and --no-app-env contradict each other. init writes AppEnv by default, so give --no-app-env to skip it, or neither flag to write it. $example',
     );
   }
   return InitArgs(
     force: flags.contains('--force'),
     dryRun: flags.contains('--dry-run'),
-    appEnv: flags.contains('--app-env'),
+    appEnv: !flags.contains('--no-app-env'),
   );
 }
 
@@ -369,16 +372,17 @@ String usageText({
       note('${wrapper.script} $arguments', '(${wrapper.label})'),
     if (initHint)
       note(
-        '$invocation init [--force] [--dry-run] [--app-env]',
+        '$invocation init [--force] [--dry-run] [--no-app-env]',
         '(first run: writes the files this tool needs)',
       ),
   ].join('\n');
   final initSection = initHint
       ? '''
 First run in a new project: "init" writes tool/build/build_config.json,
-$envDir/<env>.json and scripts/build.sh|ps1 from the project's own files, and
-never overwrites a file without --force. --app-env also writes AppEnv, a small
-class that reads APP_ENV and BASE_URL; --dry-run only lists what it would write.
+$envDir/<env>.json, scripts/build.sh|ps1 and AppEnv (lib/config/app_env.dart, or
+lib/app_env.dart without lib/config/, a small class that reads APP_ENV and
+BASE_URL) from the project's own files, and never overwrites a file without
+--force. --no-app-env skips AppEnv; --dry-run only lists what it would write.
 
 '''
       : '';

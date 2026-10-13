@@ -3,7 +3,7 @@
 ///
 /// It creates only what is missing (an existing file is skipped unless
 /// `--force`), reads and writes through [BuildFs], and never touches
-/// `lib/main.dart`.
+/// `lib/main.dart`. The `AppEnv` class is part of it unless `--no-app-env`.
 library;
 
 import 'dart:convert';
@@ -24,7 +24,7 @@ class InitOptions {
   const InitOptions({
     this.force = false,
     this.dryRun = false,
-    this.appEnv = false,
+    this.appEnv = true,
   });
 
   /// Overwrite files that already exist (the default skips them).
@@ -33,7 +33,8 @@ class InitOptions {
   /// List what would be written and write nothing.
   final bool dryRun;
 
-  /// Also write `AppEnv`, a small class that reads `APP_ENV` and `BASE_URL`.
+  /// Write `AppEnv`, a small class that reads `APP_ENV` and `BASE_URL` (the
+  /// default; `false` is `--no-app-env`).
   final bool appEnv;
 }
 
@@ -45,6 +46,7 @@ class _Item {
     this.executable = false,
     this.buildEnv,
     this.keepsSettings = false,
+    this.kept,
   });
 
   /// '/'-separated, relative to the project root.
@@ -56,10 +58,15 @@ class _Item {
   /// `APP_ENV` and `BASE_URL` only and keeps every other key.
   final BuildEnv? buildEnv;
 
-  /// True when overwriting keeps what the project set in the existing file
-  /// (the config and the env files), so nothing is lost and nothing is said
-  /// about replaced content.
+  /// True when overwriting loses nothing the project wrote: the config and the
+  /// env files keep its keys, and `AppEnv` is only ever replaced when it is
+  /// `init`'s own text. Nothing is said about replaced content.
   final bool keepsSettings;
+
+  /// Set when `init` must not write the file, not even with `--force`: the
+  /// reason, as it is reported. Used for a file of the project's (its own
+  /// `AppEnv`, or a file where `AppEnv` would go), which `init` never replaces.
+  final String? kept;
 }
 
 /// The wrapper scripts: thin, so the tool stays one command.
@@ -80,8 +87,90 @@ dart run flutter_build_tools @args
 exit $LASTEXITCODE
 ''';
 
-/// The `AppEnv` class written by `--app-env`.
-const String _appEnvSource =
+/// The `AppEnv` class `init` writes, with [_envDirToken] and
+/// [_envDirLiteralToken] standing for the folder of the env files.
+///
+/// `name`, `baseUrl`, `buildSha` and `summary` are what the first version of
+/// the class had, and apps read them: they stay as they are.
+const String _appEnvTemplate =
+    r'''import 'package:flutter/foundation.dart' show kReleaseMode;
+
+/// Build-time settings, compiled in by `flutter_build_tools` from the env file
+/// of the environment that was built (`--dart-define-from-file`).
+///
+/// Call [ensureValid] first in `main()`. Running from the IDE or `flutter run`
+/// passes no env file unless you add one, and then [name] and [baseUrl] are
+/// empty: `flutter run --dart-define-from-file=@ENV_DIR@/dev.json`.
+class AppEnv {
+  AppEnv._();
+
+  /// `dev`, `preprod`, `prod` or `local`; empty when no env file was passed.
+  static const String name = String.fromEnvironment('APP_ENV');
+
+  /// The API origin of this environment; empty when no env file was passed.
+  static const String baseUrl = String.fromEnvironment('BASE_URL');
+
+  /// The short git commit of the build (`-dirty` when the tree had changes).
+  static const String buildSha = String.fromEnvironment('BUILD_SHA');
+
+  /// One line for a log: `dev https://... 1a2b3c4`.
+  static String get summary => '$name $baseUrl $buildSha';
+
+  /// Stops a release build that was made without an env file.
+  ///
+  /// Throws a [StateError] in a release build when [name] or [baseUrl] is
+  /// empty. Does nothing in debug and profile builds, so a plain `flutter run`
+  /// keeps working (with an empty [baseUrl]).
+  static void ensureValid() {
+    if (!kReleaseMode) return;
+    final missing = [
+      if (name.isEmpty) 'APP_ENV',
+      if (baseUrl.isEmpty) 'BASE_URL',
+    ];
+    if (missing.isEmpty) return;
+    throw StateError(
+      'AppEnv: this release build has no ${missing.join(' and ')}. APP_ENV and '
+      'BASE_URL come from the env file of the build: build with '
+      '"dart run flutter_build_tools <platform> <env>", or pass '
+      '--dart-define-from-file=@ENV_DIR_LITERAL@/<env>.json to flutter build.',
+    );
+  }
+}
+''';
+
+/// The place of the env folder in a comment of [_appEnvTemplate].
+const String _envDirToken = '@ENV_DIR@';
+
+/// The place of the env folder in a single-quoted string of
+/// [_appEnvTemplate].
+const String _envDirLiteralToken = '@ENV_DIR_LITERAL@';
+
+/// The text of the `AppEnv` file for a project whose env files are in
+/// [envDir]. The folder is the project's own text, so it is made safe for the
+/// two places it goes to: a line break would end the comment, and a quote, a
+/// `$` or a `\` would change the string literal.
+String _appEnvSource(String envDir) {
+  final comment = envDir.replaceAll(RegExp(r'[\r\n]'), ' ');
+  final literal = envDir
+      .replaceAll(r'\', r'\\')
+      .replaceAll("'", r"\'")
+      .replaceAll(r'$', r'\$')
+      .replaceAll('\n', r'\n')
+      .replaceAll('\r', r'\r');
+  return _appEnvTemplate.replaceAllMapped(
+    RegExp('$_envDirLiteralToken|$_envDirToken'),
+    (match) => match[0] == _envDirToken ? comment : literal,
+  );
+}
+
+/// [text] with CRLF line endings as LF, so a file that a checkout with
+/// `autocrlf` converted still equals the text `init` wrote.
+String _lf(String text) => text.replaceAll('\r\n', '\n');
+
+/// The text `--app-env` of 0.2.0 wrote. It is init's own, so `--force`
+/// replaces it without calling it custom content, and a file that still holds
+/// it is the one that has no `ensureValid`.
+const String _appEnvSourceV020 =
     r'''/// Build-time settings, compiled in by `flutter_build_tools` from the env file
 /// of the environment that was built (`--dart-define-from-file`).
 ///
@@ -103,6 +192,22 @@ class AppEnv {
   static String get summary => '$name $baseUrl $buildSha';
 }
 ''';
+
+/// A line that declares a type called `AppEnv`: a class (with any modifiers),
+/// an enum, a mixin, an extension type or a typedef. Anchored to the start of
+/// the line, so a commented-out declaration, `AppEnvironment` and `AppEnv2` do
+/// not count.
+final RegExp _appEnvDeclaration = RegExp(
+  r'^[ \t]*(?:(?:abstract|base|final|interface|sealed)[ \t]+)*'
+  r'(?:mixin[ \t]+class|class|enum|mixin|typedef|extension[ \t]+type(?:[ \t]+const)?)'
+  r'[ \t]+AppEnv(?![\w$])',
+  multiLine: true,
+);
+
+/// True when the Dart [source] declares a type called `AppEnv` (a class, enum,
+/// mixin, extension type or typedef), which `init` must not define a second
+/// time.
+bool declaresAppEnv(String source) => _appEnvDeclaration.hasMatch(source);
 
 String _json(Map<String, Object?> value) =>
     '${const JsonEncoder.withIndent('  ').convert(value)}\n';
@@ -197,21 +302,13 @@ Future<int> runInit(
       ? fileEnvDir
       : defaultEnvDirectory;
 
-  // AppEnv lives in lib/config/ when the project has that folder, else in
-  // lib/. A copy that already exists in the other place is the one to use
-  // (and to report in the main.dart import), never a second class.
-  final hasConfigDir = env.fs.dirExists(env.abs('lib/config'));
-  final preferredAppEnv = hasConfigDir
-      ? 'lib/config/app_env.dart'
-      : 'lib/app_env.dart';
-  final otherAppEnv = hasConfigDir
-      ? 'lib/app_env.dart'
-      : 'lib/config/app_env.dart';
-  final appEnvPath =
-      !env.fs.fileExists(env.abs(preferredAppEnv)) &&
-          env.fs.fileExists(env.abs(otherAppEnv))
-      ? otherAppEnv
-      : preferredAppEnv;
+  // AppEnv is written unless --no-app-env. A project that defines its own
+  // AppEnv is never given a second one, and a file of the project's is never
+  // replaced: only init's own text (this version's, or 0.2.0's) is.
+  final appEnvText = _appEnvSource(envDir);
+  final appEnvPlace = options.appEnv
+      ? _locateAppEnv(env, initsOwn: [appEnvText, _appEnvSourceV020])
+      : null;
 
   final items = <_Item>[
     _Item(
@@ -228,7 +325,13 @@ Future<int> runInit(
       ),
     const _Item('scripts/build.sh', _shellWrapper, executable: true),
     const _Item('scripts/build.ps1', _powerShellWrapper),
-    if (options.appEnv) _Item(appEnvPath, _appEnvSource),
+    if (appEnvPlace != null)
+      _Item(
+        appEnvPlace.path,
+        appEnvText,
+        keepsSettings: true,
+        kept: appEnvPlace.kept,
+      ),
   ];
 
   console.out(
@@ -244,6 +347,12 @@ Future<int> runInit(
       console.out('  ${verb.padRight(15)} $path$note');
   for (final item in items) {
     final absolute = env.abs(item.path);
+    final kept = item.kept;
+    if (kept != null) {
+      skipped.add(item.path);
+      report('skipped', item.path, ' ($kept)');
+      continue;
+    }
     final exists = env.fs.fileExists(absolute);
     if (exists && !options.force) {
       skipped.add(item.path);
@@ -252,7 +361,7 @@ Future<int> runInit(
     }
     // What an overwrite changes, said before the file is touched so a dry run
     // shows it too: the real URL an env file loses (its other keys are kept),
-    // or that a script or class that is not init's own text is replaced.
+    // or that a script that is not init's own text is replaced.
     var content = item.content;
     var note = '';
     if (exists) {
@@ -269,7 +378,7 @@ Future<int> runInit(
           note = ' (BASE_URL was $previous)';
         }
         if (oldValues == null) note = ' (custom content replaced)';
-      } else if (!item.keepsSettings && old != item.content) {
+      } else if (!item.keepsSettings && _lf(old) != _lf(item.content)) {
         note = ' (custom content replaced)';
       }
     }
@@ -282,8 +391,13 @@ Future<int> runInit(
       env.fs.writeString(absolute, content);
     } on FileSystemException catch (e) {
       final written = [...created, ...overwritten];
+      // The class is the one file of init that lives in the project's source:
+      // when it cannot be written, there is a way to do without it.
+      final skipClass = item.path == appEnvPlace?.path
+          ? ' Or run init --no-app-env to skip the AppEnv class.'
+          : '';
       throw BuildException(
-        'could not write ${item.path}: ${fileProblem(e)}. ${written.isEmpty ? 'Nothing was written.' : 'Already written: ${written.join(', ')}.'} Fix the path (permissions, or a file where a folder should be) and run init again; without --force it only creates what is missing.',
+        'could not write ${item.path}: ${fileProblem(e)}. ${written.isEmpty ? 'Nothing was written.' : 'Already written: ${written.join(', ')}.'} Fix the path (permissions, or a file where a folder should be) and run init again; without --force it only creates what is missing.$skipClass',
       );
     }
     if (item.executable && env.host != HostOs.windows) {
@@ -347,17 +461,22 @@ Future<int> runInit(
   console.out(
     '  ${step++}. $invocation apk dev --dry-run   (then without --dry-run)',
   );
-  if (options.appEnv) {
-    console.out('');
-    console.out(
-      'To read the settings in the app (init never edits lib/main.dart), add to lib/main.dart:',
+  if (appEnvPlace != null) {
+    final path = appEnvPlace.path;
+    final written = created.contains(path) || overwritten.contains(path);
+    _printAppEnvHint(
+      console,
+      packageName: name,
+      path: path,
+      source: written ? appEnvText : _readOrNull(env, path),
     );
-    final importPath = appEnvPath.substring('lib/'.length);
-    console.out("    import 'package:$name/$importPath';");
-    console.out('    // in main(), before runApp:');
-    console.out(
-      '    debugPrint(AppEnv.summary);   // needs package:flutter/foundation.dart',
-    );
+    if (!appEnvPlace.scanned && created.contains(path)) {
+      console
+        ..out('')
+        ..out(
+          'note: lib/ could not be read completely (a folder is not readable), so init could not check whether the project already defines an AppEnv. If it does, delete $path and use that class; give --no-app-env to skip the class.',
+        );
+    }
   }
   final gitignore = env.abs('.gitignore');
   final ignoresDist =
@@ -374,6 +493,148 @@ Future<int> runInit(
   }
   await _printGitIgnoredNotes(env, envDir);
   return 0;
+}
+
+/// The text of [relative], or null when it cannot be read (missing, or not
+/// UTF-8).
+String? _readOrNull(BuildEnvironment env, String relative) {
+  final file = env.abs(relative);
+  if (!env.fs.fileExists(file)) return null;
+  try {
+    return env.fs.readString(file);
+  } on Exception {
+    return null;
+  }
+}
+
+/// The Dart files under `lib/` of [env], '/'-separated and sorted, and whether
+/// the listing was complete. A folder that cannot be listed is "no files", not
+/// a failure: `complete` is false then, and the files may be missing.
+({List<String> files, bool complete}) _dartFilesUnderLib(BuildEnvironment env) {
+  final List<String> files;
+  try {
+    files = env.fs.listFiles(env.abs('lib'), recursive: true);
+  } on Exception {
+    return (files: const [], complete: false);
+  }
+  return (
+    files: [
+      for (final file in files)
+        if (file.endsWith('.dart')) env.rel(file),
+    ]..sort(),
+    complete: true,
+  );
+}
+
+/// Why `init` keeps a class that the project defines (anywhere under `lib/`).
+const String _keptOwnClass =
+    'already defines AppEnv; init writes no second one';
+
+/// Why `init` keeps a file at the place where it would write `AppEnv`.
+const String _keptNoClass =
+    'exists but defines no AppEnv; init does not replace it, not even with --force';
+
+/// Where `AppEnv` lives in the project of [env], and whether `init` writes it.
+///
+/// `path` ('/'-separated) is `lib/config/app_env.dart` when the project has
+/// `lib/config/`, else `lib/app_env.dart`; a copy that already exists in the
+/// other place is the one to use (and to name in the `main.dart` import),
+/// never a second class. When neither place declares an `AppEnv` and another
+/// file under `lib/` does, that file is the project's own.
+///
+/// `kept` is set when `init` writes nothing at `path`, with or without
+/// `--force`: the file is the project's, not one of [initsOwn] (the texts
+/// `init` wrote, line endings aside), so replacing it would destroy source. It
+/// is null when there is no file yet or the file holds only `init`'s own text.
+/// `scanned` is false when `lib/` could not be listed completely, so a class
+/// of the project's may have been missed.
+({String path, String? kept, bool scanned}) _locateAppEnv(
+  BuildEnvironment env, {
+  required List<String> initsOwn,
+}) {
+  final hasConfigDir = env.fs.dirExists(env.abs('lib/config'));
+  final preferred = hasConfigDir
+      ? 'lib/config/app_env.dart'
+      : 'lib/app_env.dart';
+  final other = hasConfigDir ? 'lib/app_env.dart' : 'lib/config/app_env.dart';
+
+  // The two places first: a class that is there is the one to use.
+  for (final relative in [preferred, other]) {
+    final text = _readOrNull(env, relative);
+    if (text == null || !declaresAppEnv(text)) continue;
+    final own = initsOwn.map(_lf).contains(_lf(text));
+    return (path: relative, kept: own ? null : _keptOwnClass, scanned: true);
+  }
+
+  // Neither holds one: one look at the rest of lib/, which stops at the first
+  // file that declares it.
+  final listing = _dartFilesUnderLib(env);
+  for (final relative in listing.files) {
+    if (relative == preferred || relative == other) continue;
+    final text = _readOrNull(env, relative);
+    if (text != null && declaresAppEnv(text)) {
+      return (path: relative, kept: _keptOwnClass, scanned: true);
+    }
+  }
+
+  // None: init's file. A file that is already there and is not an AppEnv is
+  // the project's (an enum of another name, say), so it stays.
+  final path =
+      !env.fs.fileExists(env.abs(preferred)) &&
+          env.fs.fileExists(env.abs(other))
+      ? other
+      : preferred;
+  return (
+    path: path,
+    kept: env.fs.fileExists(env.abs(path)) ? _keptNoClass : null,
+    scanned: listing.complete,
+  );
+}
+
+/// The `main.dart` lines for the `AppEnv` in [path], whose text is [source]
+/// (null when it cannot be read). Only the members that [source] has are
+/// shown: a file that is not the one `init` writes may lack them, and a line
+/// that does not compile is worse than none. A file that defines no `AppEnv`
+/// has no lines at all.
+void _printAppEnvHint(
+  Console console, {
+  required String packageName,
+  required String path,
+  required String? source,
+}) {
+  console.out('');
+  if (source == null || !declaresAppEnv(source)) {
+    console.out(
+      'note: $path exists but ${source == null ? 'cannot be read as text' : 'defines no AppEnv'}, so init wrote none and there is nothing to add to lib/main.dart. Delete or move it and run init again to get one (init does not replace it, not even with --force), or give --no-app-env to skip the class.',
+    );
+    return;
+  }
+  final hasGuard = RegExp(r'\bensureValid\s*\(').hasMatch(source);
+  final hasSummary = RegExp(r'\bsummary\b').hasMatch(source);
+  console.out(
+    'To read the settings in the app (init never edits lib/main.dart), add to lib/main.dart:',
+  );
+  final importPath = path.substring('lib/'.length);
+  console.out("    import 'package:$packageName/$importPath';");
+  if (hasGuard || hasSummary) console.out('    // in main(), before runApp:');
+  if (hasGuard) {
+    console.out(
+      '    AppEnv.ensureValid();   // a release build without APP_ENV or BASE_URL stops here',
+    );
+  }
+  if (hasSummary) {
+    console.out(
+      '    debugPrint(AppEnv.summary);   // needs package:flutter/foundation.dart',
+    );
+  }
+  if (!hasGuard) {
+    console.out('');
+    console.out(
+      _lf(source) == _lf(_appEnvSourceV020)
+          ? 'note: $path was written by an earlier init and has no ensureValid(), so a release build made without an env file is not stopped at startup. Delete it and run init again to get the one with the guard.'
+          : 'note: $path is your own AppEnv and init did not change it. It has no ensureValid(), so a release build made without an env file is not stopped at startup; add one ("The AppEnv class" in the README shows it).',
+    );
+  }
 }
 
 /// The JSON object in [text]; null when it is not valid JSON or not an object

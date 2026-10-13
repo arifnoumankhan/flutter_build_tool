@@ -31,3 +31,8 @@ A real project has the complete `windows/` and `macos/` folders that
 To override one inferred fact, add `tool/build/build_config.json` with just
 that key (`{"slug": "Shop"}`); `dart run flutter_build_tools init` writes the
 file with all of them.
+
+`init --dry-run` also lists `lib/app_env.dart`: `init` writes the `AppEnv`
+class that reads `APP_ENV` and `BASE_URL` (`--no-app-env` skips it). The class
+imports `package:flutter/foundation.dart`, so it belongs in a Flutter app; this
+example is not one, and a dry run writes nothing.

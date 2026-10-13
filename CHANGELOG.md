@@ -1,3 +1,22 @@
+## 0.2.1
+
+`init` now sets up the `AppEnv` class as well, so one command writes everything a new project needs.
+
+### Added
+
+* **`--no-app-env`** for `init`: skips the `AppEnv` class and the `main.dart` lines.
+* **`AppEnv.ensureValid()`** in the generated class. In a release build it throws a `StateError` when `APP_ENV` or `BASE_URL` is empty, with a message that says to build with `dart run flutter_build_tools <platform> <env>` or to pass `--dart-define-from-file=<envDir>/<env>.json` (the `envDir` of the project's config, escaped where the file needs it). It does nothing in debug and profile builds, so a plain `flutter run` keeps working. `name`, `baseUrl`, `buildSha` and `summary` are unchanged.
+* **`init` finds an `AppEnv` the project already defines.** A class, enum, mixin, extension type or typedef named `AppEnv` in any Dart file under `lib/` (`lib/config/app_env.dart` and `lib/app_env.dart` included) is left alone, also with `--force`: `init` writes no second one, lists the file as skipped and prints its import. The `main.dart` lines show only the members that file has.
+* **`--force` replaces `AppEnv` only when it is the text `init` wrote** (this version's, or the one of 0.2.0; line endings do not matter). A file of the project's at its place, one that defines no `AppEnv` included, is left alone and reported, with the way to get the class (move the file, or `--no-app-env`).
+* **Two notes.** A write of the class that fails says that `--no-app-env` skips it. A `lib/` folder that cannot be read completely gets a note that an existing `AppEnv` may have been missed.
+
+### Changed
+
+* **`init` writes `AppEnv` by default** (`lib/config/app_env.dart`, or `lib/app_env.dart` when there is no `lib/config/`), and prints the lines for `main.dart`: the import, `AppEnv.ensureValid();` and `debugPrint(AppEnv.summary);`. `--app-env` is still accepted and changes nothing; `--app-env` together with `--no-app-env` is a usage error (exit code 2), and `--no-app-env` on a build command is refused like `--app-env` and `--force`.
+* **An `AppEnv` written by 0.2.0** is kept (it has no `ensureValid()`); `init` says so and how to get the new one. `--force` replaces it without calling it custom content.
+* `InitOptions.appEnv` defaults to `true`.
+* README: the Quick start shows `AppEnv.baseUrl`, a section describes the class, and the env files section points at `AppEnv` before `String.fromEnvironment`.
+
 ## 0.2.0
 
 A new project needs only the dependency and `dart run flutter_build_tools init`. A project that already has a `tool/build/build_config.json` keeps its configuration and its `--help`, `--list` and `--dry-run` output.

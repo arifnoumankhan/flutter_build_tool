@@ -4,14 +4,24 @@
 # pubspec.yaml
 dev_dependencies:
   flutter_build_tools:
-    git: {url: 'https://github.com/arifnoumankhan/flutter_build_tool.git', ref: v0.2.0}
+    git: {url: 'https://github.com/arifnoumankhan/flutter_build_tool.git', ref: v0.2.1}
 ```
 ```bash
 flutter pub get
-dart run flutter_build_tools init      # writes tool/build/build_config.json, config/env/*.json, scripts/ (offline; never overwrites)
+dart run flutter_build_tools init      # writes tool/build/build_config.json, config/env/*.json, scripts/ and the AppEnv class lib/app_env.dart (lib/config/app_env.dart when lib/config/ exists); offline, never overwrites
 # edit BASE_URL in config/env/dev.json, preprod.json, prod.json (init writes placeholders; prod refuses them)
 dart run flutter_build_tools apk dev   # -> dist/android/<Name>-dev-v<version>.apk (+ .sha256, .json); --dry-run looks first
 # CI: flutter pub get && dart run flutter_build_tools apk preprod    (the exit code is the result)
+```
+```dart
+// lib/main.dart: init prints these lines (the import names the file it wrote) and never edits the file
+import 'package:my_app/app_env.dart';
+
+void main() {
+  AppEnv.ensureValid();                        // a release build without an env file stops here
+  final api = Uri.parse(AppEnv.baseUrl);       // BASE_URL of the environment that was built
+  // ...
+}
 ```
 
 One command builds a Flutter app for any platform and any environment, and the
@@ -98,7 +108,7 @@ dev_dependencies:
   flutter_build_tools:
     git:
       url: https://github.com/arifnoumankhan/flutter_build_tool.git
-      ref: v0.2.0
+      ref: v0.2.1
 ```
 
 Then run `flutter pub get` in the app (`dart run` also resolves a declared
@@ -131,7 +141,7 @@ offline, from any folder inside the project, never edits `lib/main.dart`, and
 creates only what is missing:
 
 ```bash
-dart run flutter_build_tools init [--force] [--dry-run] [--app-env]
+dart run flutter_build_tools init [--force] [--dry-run] [--no-app-env]
 ```
 
 | It creates | Content |
@@ -140,14 +150,15 @@ dart run flutter_build_tools init [--force] [--dry-run] [--app-env]
 | `config/env/dev.json`, `preprod.json`, `prod.json` | `APP_ENV` and a `BASE_URL` placeholder (`https://<env>.replace-me.invalid`). Placeholders cannot be reached; prod refuses them (`placeholder-url`), dev and preprod only warn |
 | `config/env/local.json` | `APP_ENV` and `http://127.0.0.1` |
 | `scripts/build.sh`, `scripts/build.ps1` | Thin wrappers: `dart run flutter_build_tools "$@"`. `build.sh` is made executable |
-| `lib/config/app_env.dart` (`lib/app_env.dart` when `lib/config/` does not exist), with `--app-env` | A small `AppEnv` class reading `APP_ENV`, `BASE_URL` and `BUILD_SHA` through `String.fromEnvironment`; the one-liner for `main.dart` is printed |
+| `lib/config/app_env.dart` (`lib/app_env.dart` when `lib/config/` does not exist), unless `--no-app-env` | A small `AppEnv` class reading `APP_ENV`, `BASE_URL` and `BUILD_SHA` through `String.fromEnvironment`, with a startup guard (`AppEnv.ensureValid()`, see [The `AppEnv` class](#the-appenv-class)); the lines for `main.dart` are printed. Written only where nothing of the project's is: a project that already defines `AppEnv` anywhere under `lib/`, or has another file at that path, keeps it, also with `--force` (then `init` names the class and prints its import) |
 
 | Switch | Effect |
 |---|---|
 | (none) | Create what is missing, list what was created and what was skipped |
 | `--dry-run` | List what would be written; write nothing |
-| `--force` | Overwrite existing files. An env file keeps every key but `APP_ENV` and `BASE_URL` (so `POS_WEB_URL` and your own `envFile.extraKeys` values survive), and a `BASE_URL` that was a real one is reported (`BASE_URL was ...`); a config file keeps every key you set in it; a script or `AppEnv` whose text is not init's own is reported as `custom content replaced`. `--dry-run --force` reports the same, and writes nothing |
-| `--app-env` | Also write `AppEnv` |
+| `--force` | Overwrite existing files. An env file keeps every key but `APP_ENV` and `BASE_URL` (so `POS_WEB_URL` and your own `envFile.extraKeys` values survive), and a `BASE_URL` that was a real one is reported (`BASE_URL was ...`); a config file keeps every key you set in it; a script whose text is not init's own is reported as `custom content replaced`. `AppEnv` is the one exception: it is replaced only when it is init's own text (this version's, or the one of 0.2.0), and a file of yours at its place stays. `--dry-run --force` reports the same, and writes nothing |
+| `--no-app-env` | Do not write `AppEnv` (and print no `main.dart` lines) |
+| `--app-env` | The default, accepted so that existing instructions keep working. Giving it together with `--no-app-env` is a usage error (exit code 2) |
 
 It prints the next steps and every fact it could not infer, and it refuses
 outside a Flutter project (no `pubspec.yaml` in the folder or above it) with
@@ -172,6 +183,74 @@ Three things it checks and only reports, never changes:
   it. Anchor the rule (`/build/`) or `git add -f` the file.
 - **`.gitignore` without `dist/`**, which makes the next prod build refuse the
   tree as dirty.
+
+### The `AppEnv` class
+
+`init` writes it by default, because every app that builds with this tool reads
+the same three values. The members are the ones of 0.2.0 (`name`, `baseUrl`,
+`buildSha`, `summary`) and `ensureValid()`:
+
+```dart
+import 'package:flutter/foundation.dart' show kReleaseMode;
+
+class AppEnv {
+  AppEnv._();
+
+  /// `dev`, `preprod`, `prod` or `local`; empty when no env file was passed.
+  static const String name = String.fromEnvironment('APP_ENV');
+
+  /// The API origin of this environment; empty when no env file was passed.
+  static const String baseUrl = String.fromEnvironment('BASE_URL');
+
+  /// The short git commit of the build (`-dirty` when the tree had changes).
+  static const String buildSha = String.fromEnvironment('BUILD_SHA');
+
+  /// One line for a log: `dev https://... 1a2b3c4`.
+  static String get summary => '$name $baseUrl $buildSha';
+
+  /// Throws a StateError in a release build without APP_ENV or BASE_URL.
+  static void ensureValid() {
+    if (!kReleaseMode) return;
+    final missing = [
+      if (name.isEmpty) 'APP_ENV',
+      if (baseUrl.isEmpty) 'BASE_URL',
+    ];
+    if (missing.isEmpty) return;
+    throw StateError(
+      'AppEnv: this release build has no ${missing.join(' and ')}. ...',
+    );
+  }
+}
+```
+
+- **`ensureValid()`** stops a release build that was made without an env file,
+  with a message that says to build with `dart run flutter_build_tools
+  <platform> <env>` or to pass `--dart-define-from-file=config/env/<env>.json`
+  (the folder is the `envDir` of the project). It does nothing in debug and
+  profile builds, so a plain `flutter run` keeps working with an empty
+  `baseUrl`; pass `--dart-define-from-file=config/env/dev.json` to run against
+  an environment.
+- **`main.dart`** is never edited. `init` prints the import (the file it
+  wrote, or the one the project already had) and the two lines to add, in
+  `main()` before `runApp`: `AppEnv.ensureValid();` and
+  `debugPrint(AppEnv.summary);`.
+- **A project that has its own `AppEnv`** (a class, enum, mixin, extension type
+  or typedef of that name in any file under `lib/`, `lib/config/app_env.dart`
+  and `lib/app_env.dart` included) is left alone: `init` writes no second one,
+  even with `--force`, reports the file and prints its import. Only the members
+  that file has are shown, and a note says when it lacks `ensureValid()`.
+- **A file of yours at its place that defines no `AppEnv`** (an enum of another
+  name, say) is left alone as well, also with `--force`: `init` says so and
+  prints no `main.dart` lines. Move or delete the file and run `init` again to
+  get the class, or use `--no-app-env`.
+- **An `AppEnv` written by 0.2.0 has no `ensureValid()`.** `init` keeps it and
+  says so; delete the file and run `init` again to get the new one (`--force`
+  also replaces it, without calling it custom, but resets every `BASE_URL` too).
+- **`--no-app-env`** skips the class and its lines. `init` also suggests it
+  when the class cannot be written (a read-only `lib/`).
+- **A `lib/` folder that cannot be read** completely leaves `init` unable to
+  tell whether the project already defines `AppEnv`; it writes its class and
+  says so in a note.
 
 ### Zero-config: what is inferred when there is no file
 
@@ -251,7 +330,7 @@ List the wrapper scripts under `cli.wrappers` in `build_config.json` to have
 ```
 dart run flutter_build_tools <platform> <env> [mode] [options]
 dart run flutter_build_tools                 (interactive picker, in a terminal)
-dart run flutter_build_tools init [--force] [--dry-run] [--app-env]   (see `init`, above)
+dart run flutter_build_tools init [--force] [--dry-run] [--no-app-env]   (see `init`, above)
 ```
 
 ### Platforms, environments, modes
@@ -290,7 +369,7 @@ command line is answered with what was expected and one example.
 | `--dry-run` | Print the resolved profile, the exact commands and the guard verdict; build nothing |
 | `--list` | Show platforms, envs and their resolved URLs (takes no other argument) |
 | `-h`, `--help` | The usage text (works even when the config is broken) |
-| `--force`, `--app-env` | `init` only (see [`init`](#init-and-what-is-inferred)); `--dry-run` also applies to `init` |
+| `--force`, `--no-app-env`, `--app-env` | `init` only (see [`init`](#init-and-what-is-inferred)); `--dry-run` also applies to `init` |
 
 Options that take a value accept `--name value` and `--name=value`.
 
@@ -432,8 +511,11 @@ lowest to highest:
    (`git rev-parse --short HEAD`, with `-dirty` when the tree has uncommitted
    or untracked changes).
 
-Your app reads these with `String.fromEnvironment('APP_ENV')`,
-`String.fromEnvironment('BASE_URL')`, and so on.
+Your app reads these through `AppEnv` (`AppEnv.name`, `AppEnv.baseUrl`,
+`AppEnv.buildSha`), the class `init` writes, which is
+`String.fromEnvironment('APP_ENV')`, `String.fromEnvironment('BASE_URL')` and
+`String.fromEnvironment('BUILD_SHA')` underneath; any other key of the file
+is read with `String.fromEnvironment('<KEY>')`.
 
 ### The build time is not a define
 

@@ -1,6 +1,6 @@
 name: flutter_build_tools
 description: One command to build a Flutter app for any platform and environment (apk, web, Windows installer, macOS dmg) with guards, deterministic artifact names, checksums and a manifest.
-version: 0.2.0
+version: 0.2.1
 repository: https://github.com/arifnoumankhan/flutter_build_tool
 publish_to: none
 
