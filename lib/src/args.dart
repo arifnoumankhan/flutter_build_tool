@@ -23,6 +23,25 @@ class ListArgs extends ParsedArgs {
   const ListArgs();
 }
 
+/// `init`: write the files a project needs (see `runInit`).
+class InitArgs extends ParsedArgs {
+  /// Creates the case.
+  const InitArgs({
+    this.force = false,
+    this.dryRun = false,
+    this.appEnv = false,
+  });
+
+  /// `--force`: overwrite files that already exist.
+  final bool force;
+
+  /// `--dry-run`: say what would be written, write nothing.
+  final bool dryRun;
+
+  /// `--app-env`: also write the small `AppEnv` class.
+  final bool appEnv;
+}
+
 /// A build (or a dry run of one).
 class BuildArgs extends ParsedArgs {
   /// Creates the case.
@@ -43,6 +62,20 @@ const Set<String> _flags = {
   '--dry-run',
   '--msix',
   '--list',
+  '--help',
+  '-h',
+  '--force',
+  '--app-env',
+};
+
+/// The word of the one command that is not a build.
+const String initWord = 'init';
+
+/// The flags `init` takes (and `--help`).
+const Set<String> _initFlags = {
+  '--force',
+  '--dry-run',
+  '--app-env',
   '--help',
   '-h',
 };
@@ -129,6 +162,17 @@ ParsedArgs parseArgs(
     return const ListArgs();
   }
 
+  if (positionals.isNotEmpty && positionals.first.toLowerCase() == initWord) {
+    return _parseInit(positionals, flags, values, invocation);
+  }
+  for (final flag in const ['--force', '--app-env']) {
+    if (flags.contains(flag)) {
+      throw UsageError(
+        '$flag only applies to the init command (e.g. $invocation init $flag).',
+      );
+    }
+  }
+
   final words = _readWords(positionals, invocation);
   final platform = words.platform;
 
@@ -158,6 +202,36 @@ ParsedArgs parseArgs(
     );
   }
   return BuildArgs(request);
+}
+
+ParsedArgs _parseInit(
+  List<String> positionals,
+  Set<String> flags,
+  Map<String, String> values,
+  String invocation,
+) {
+  final example = 'Example: $invocation init --dry-run';
+  if (positionals.length > 1) {
+    throw UsageError(
+      'init takes no platform, environment or mode (got "${positionals.skip(1).join('", "')}"). $example',
+    );
+  }
+  if (values.isNotEmpty) {
+    throw UsageError(
+      'init does not take ${values.keys.first}; it takes --force, --dry-run and --app-env. $example',
+    );
+  }
+  final other = flags.where((flag) => !_initFlags.contains(flag));
+  if (other.isNotEmpty) {
+    throw UsageError(
+      'init does not take ${other.first}; it takes --force, --dry-run and --app-env. $example',
+    );
+  }
+  return InitArgs(
+    force: flags.contains('--force'),
+    dryRun: flags.contains('--dry-run'),
+    appEnv: flags.contains('--app-env'),
+  );
 }
 
 /// Sorts the bare words into platform, env and mode. They are told apart by
@@ -266,12 +340,16 @@ int? _buildNumber(String? value) {
 /// display name when its config is readable), [invocation] the command a
 /// person types, [envDir] the env folder, [docs] where the long documentation
 /// lives and [wrappers] the optional wrapper scripts of the project.
+///
+/// [initHint] adds the `init` command (for a project that has no
+/// `build_config.json` yet); without it the text is the same as in 0.1.0.
 String usageText({
   String title = 'Flutter',
   String invocation = BuildToolOptions.defaultInvocation,
   String envDir = AppConfig.defaultEnvDir,
   String? docs,
   List<WrapperScript> wrappers = const [],
+  bool initHint = false,
 }) {
   // The notes of the "Usage:" lines start in one column.
   const noteColumn = 54;
@@ -289,7 +367,21 @@ String usageText({
     note(invocation, '(interactive picker, in a terminal)'),
     for (final wrapper in wrappers)
       note('${wrapper.script} $arguments', '(${wrapper.label})'),
+    if (initHint)
+      note(
+        '$invocation init [--force] [--dry-run] [--app-env]',
+        '(first run: writes the files this tool needs)',
+      ),
   ].join('\n');
+  final initSection = initHint
+      ? '''
+First run in a new project: "init" writes tool/build/build_config.json,
+$envDir/<env>.json and scripts/build.sh|ps1 from the project's own files, and
+never overwrites a file without --force. --app-env also writes AppEnv, a small
+class that reads APP_ENV and BASE_URL; --dry-run only lists what it would write.
+
+'''
+      : '';
   return '''
 $title build tool: one command to build an app for any platform and environment.
 
@@ -323,6 +415,6 @@ Options:
   --list                         Show platforms, envs and their resolved URLs
   -h, --help                     This text
 
-Exit codes: 0 ok, 1 build or guard failure, 2 bad command line.
+${initSection}Exit codes: 0 ok, 1 build or guard failure, 2 bad command line.
 ''';
 }

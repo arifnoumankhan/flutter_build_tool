@@ -57,21 +57,51 @@ void main() {
     }
   }
 
-  test('outside a Flutter project it says so and exits 2', () async {
-    // The system temp folder has no pubspec.yaml above it.
-    final result = await tool(['--list'], cwd: temp.path);
-    expect(result.exitCode, 2, reason: '${result.stdout}${result.stderr}');
-    expect(result.stderr, contains('error: no pubspec.yaml in '));
-    expect(result.stderr, contains('or any parent folder.'));
-    expect(result.stdout, isEmpty);
-  });
+  // "Outside a Flutter project exits 2" is tested in entry_test.dart against
+  // an in-memory file system: a real process could only prove it on a machine
+  // that has no pubspec.yaml above the system temp folder.
 
   test('--help works in a project that has no build config yet', () async {
     File(p.join(temp.path, 'pubspec.yaml')).writeAsStringSync('name: demo\n');
     final result = await tool(['--help'], cwd: temp.path);
     expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
-    expect(result.stdout, startsWith('Flutter build tool: one command'));
+    // Nothing is configured, so the title is inferred from the pubspec name
+    // and the first-run command is listed.
+    expect(result.stdout, startsWith('Demo build tool: one command'));
     expect(result.stdout, contains('dart run flutter_build_tools <platform>'));
+    expect(result.stdout, contains('dart run flutter_build_tools init'));
+  });
+
+  test('a project with no tool/ and no config/ builds after init', () async {
+    File(
+      p.join(temp.path, 'pubspec.yaml'),
+    ).writeAsStringSync('name: demo_shop\nversion: 3.0.1+12\n');
+    final before = await tool(['web', 'dev', '--dry-run'], cwd: temp.path);
+    expect(before.exitCode, 1, reason: '${before.stdout}${before.stderr}');
+    expect(
+      before.stderr,
+      contains(
+        'Run "dart run flutter_build_tools init" to create every missing',
+      ),
+    );
+
+    final init = await tool(['init'], cwd: temp.path);
+    expect(init.exitCode, 0, reason: '${init.stdout}${init.stderr}');
+    expect(
+      File(
+        p.join(temp.path, 'tool', 'build', 'build_config.json'),
+      ).existsSync(),
+      isTrue,
+    );
+
+    final after = await tool(['web', 'dev', '--dry-run'], cwd: temp.path);
+    expect(after.exitCode, 0, reason: '${after.stdout}${after.stderr}');
+    expect(after.stdout, contains('DemoShop-dev-v3.0.1.zip'));
+    expect(after.stderr, contains('warning [placeholder-url]'));
+
+    final prod = await tool(['web', 'prod', '--dry-run'], cwd: temp.path);
+    expect(prod.exitCode, 1);
+    expect(prod.stderr, contains('error [placeholder-url]'));
   });
 
   test('--list reads the project facts', () async {

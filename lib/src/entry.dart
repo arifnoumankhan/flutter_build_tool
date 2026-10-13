@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter_build_tools/src/cli.dart';
 import 'package:flutter_build_tools/src/environment.dart';
+import 'package:flutter_build_tools/src/fs.dart';
 import 'package:flutter_build_tools/src/options.dart';
 
 /// Runs the tool for the Flutter project at [projectRoot] and returns the exit
@@ -38,6 +39,60 @@ Future<int> runBuildToolCli(
     return 2;
   }
   return runBuildTool(args, env, options: resolved);
+}
+
+/// The nearest folder from [start] upwards that holds a `pubspec.yaml`, or
+/// null when there is none (the working directory is not inside a project).
+///
+/// [fs] is the file system seam, so the walk is testable without touching the
+/// disk; [context] defaults to the host's path style.
+String? findProjectRoot(
+  String start, {
+  BuildFs fs = const IoFs(),
+  p.Context? context,
+}) {
+  final path = context ?? p.context;
+  var dir = path.normalize(path.absolute(start));
+  while (true) {
+    if (fs.fileExists(path.join(dir, 'pubspec.yaml'))) return dir;
+    final parent = path.dirname(dir);
+    if (parent == dir) return null;
+    dir = parent;
+  }
+}
+
+/// What `dart run flutter_build_tools` does: finds the project from
+/// [directory] (the nearest folder upwards with a `pubspec.yaml`, so it works
+/// from any subfolder) and runs the tool there. Returns the exit code: 2 when
+/// there is no project, with the message printed to [console].
+///
+/// [fs] and [console] default to the real machine; tests pass their own, so
+/// "outside a Flutter project" does not depend on what the test machine has
+/// above its temporary folder. [environmentFor] builds the environment for
+/// the root that was found (default [BuildEnvironment.system]); [pathContext]
+/// is the path style of [directory] (default: the host's).
+Future<int> runBuildToolFromDirectory(
+  List<String> args, {
+  required String directory,
+  BuildFs fs = const IoFs(),
+  Console console = const StdConsole(),
+  BuildEnvironment Function(String root)? environmentFor,
+  BuildToolOptions? options,
+  p.Context? pathContext,
+}) async {
+  final root = findProjectRoot(directory, fs: fs, context: pathContext);
+  if (root == null) {
+    console.err(
+      'error: no pubspec.yaml in $directory or any parent folder. Run this from inside a Flutter project (a folder with a pubspec.yaml); for a new project see the "Quick start" section of the flutter_build_tools README.',
+    );
+    return 2;
+  }
+  return runBuildToolCli(
+    args,
+    projectRoot: root,
+    options: options,
+    environment: environmentFor?.call(root),
+  );
 }
 
 /// The command a person types to run the script at [script] for the project

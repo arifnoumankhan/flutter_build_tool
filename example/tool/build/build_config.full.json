@@ -1,0 +1,27 @@
+{
+  "$comment": "Every key flutter_build_tools knows, with the optional ones set. Not read by the tool: copy what you need into build_config.json.",
+  "app": "example",
+  "slug": "ExampleApp",
+  "displayName": "Example App",
+  "envDir": "config/env",
+  "windows": {
+    "exe": "example_app.exe",
+    "installerScript": "installer/example_app.iss",
+    "cleanupPrefix": "Example"
+  },
+  "macos": {
+    "appName": "Example App"
+  },
+  "devHostMarkers": ["devexample"],
+  "envFile": {
+    "extraKeys": ["FEATURE_SET"],
+    "extraUrlKeys": ["ANALYTICS_URL"]
+  },
+  "cli": {
+    "docs": "tool/build/README.md",
+    "wrappers": [
+      { "script": "scripts/build.sh", "label": "macOS/Linux wrapper" },
+      { "script": "scripts/build.ps1", "label": "Windows wrapper" }
+    ]
+  }
+}

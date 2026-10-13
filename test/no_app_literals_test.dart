@@ -13,7 +13,8 @@ import 'package:test/test.dart';
 /// Hosts a doc comment or message may use as an example.
 final _placeholderHost = RegExp(
   r'^(example\.(com|org|net)|[a-z0-9-]+\.example\.(com|org|net)|host|localhost'
-  r'|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|\.*)$',
+  r'|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+'
+  r'|[a-z0-9.-]+\.invalid|\.*)$',
 );
 
 final _url = RegExp(r'https?://([A-Za-z0-9.\-]*)');

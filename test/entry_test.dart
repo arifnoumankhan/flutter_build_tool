@@ -1,5 +1,6 @@
 // The process entry: which command the messages show, and what happens when
 // the working folder is not a Flutter project.
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 import 'package:flutter_build_tools/src/entry.dart';
@@ -159,5 +160,101 @@ void main() {
         );
       },
     );
+  });
+
+  group('findProjectRoot', () {
+    final posix = p.Context(style: p.Style.posix);
+
+    test('is the folder itself when it has a pubspec.yaml', () {
+      final fs = MemoryFs()..put('/work/app/pubspec.yaml', 'name: app\n');
+      expect(findProjectRoot('/work/app', fs: fs, context: posix), '/work/app');
+    });
+
+    test('is the nearest folder above that has one', () {
+      final fs = MemoryFs()
+        ..put('/work/pubspec.yaml', 'name: outer\n')
+        ..put('/work/app/pubspec.yaml', 'name: app\n')
+        ..put('/work/app/lib/src/a.dart', '');
+      expect(
+        findProjectRoot('/work/app/lib/src', fs: fs, context: posix),
+        '/work/app',
+      );
+    });
+
+    test('is null when no folder up to the root has one', () {
+      final fs = MemoryFs()..put('/work/app/lib/a.dart', '');
+      expect(findProjectRoot('/work/app/lib', fs: fs, context: posix), isNull);
+    });
+
+    test('a pubspec.yaml that is a folder is not a project', () {
+      final fs = MemoryFs()..createDir('/work/app/pubspec.yaml');
+      expect(findProjectRoot('/work/app', fs: fs, context: posix), isNull);
+    });
+  });
+
+  group('runBuildToolFromDirectory', () {
+    final posix = p.Context(style: p.Style.posix);
+
+    test('outside a Flutter project it says so and returns 2, whatever the '
+        'machine has above its temporary folder', () async {
+      // The in-memory file system has no pubspec.yaml anywhere, so this
+      // does not depend on the real folders above the test's temp dir.
+      final fs = MemoryFs();
+      final console = FakeConsole();
+      expect(
+        await runBuildToolFromDirectory(
+          ['--list'],
+          directory: '/anywhere/below',
+          fs: fs,
+          console: console,
+          pathContext: posix,
+        ),
+        2,
+      );
+      expect(
+        console.stderrText,
+        allOf(
+          startsWith(
+            'error: no pubspec.yaml in /anywhere/below or any parent folder.',
+          ),
+          contains('Quick start'),
+        ),
+      );
+      expect(console.stdoutText, isEmpty);
+    });
+
+    test('from a subfolder it runs the tool for the project above', () async {
+      final world = TestWorld();
+      String? seenRoot;
+      final code = await runBuildToolFromDirectory(
+        ['--list'],
+        directory: '/repo/lib/features',
+        fs: world.fs,
+        console: world.console,
+        pathContext: posix,
+        environmentFor: (root) {
+          seenRoot = root;
+          return world.env;
+        },
+      );
+      expect(code, 0, reason: world.console.allText);
+      expect(seenRoot, '/repo');
+      expect(world.console.stdoutText, contains('Example App (ExampleApp)'));
+    });
+
+    test('the exit code of the tool is passed through', () async {
+      final world = TestWorld();
+      expect(
+        await runBuildToolFromDirectory(
+          ['apk', 'staging'],
+          directory: '/repo',
+          fs: world.fs,
+          console: world.console,
+          pathContext: posix,
+          environmentFor: (_) => world.env,
+        ),
+        2,
+      );
+    });
   });
 }

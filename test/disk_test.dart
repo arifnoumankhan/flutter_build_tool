@@ -8,7 +8,7 @@ import 'fakes.dart';
 /// What `df -Pk <dir>` prints on macOS and on Linux.
 const _macDf = '''
 Filesystem   1024-blocks     Used Available Capacity  Mounted on
-/dev/disk3s1    97656252 86275520  11259772    89%    /Volumes/Workspaces
+/dev/disk3s1    97656252 86275520  11259772    89%    /Volumes/Data
 ''';
 
 const _linuxDf = '''
@@ -30,7 +30,7 @@ void main() {
       expect(
         parseDfFreeBytes(
           'Filesystem 512-blocks Used Available Capacity Mounted on\n'
-          '/dev/disk3s1 195312504 172551040 22519544 89% /Volumes/Workspaces\n',
+          '/dev/disk3s1 195312504 172551040 22519544 89% /Volumes/Data\n',
         ),
         22519544 * 512,
       );

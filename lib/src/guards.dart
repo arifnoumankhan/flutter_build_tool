@@ -3,6 +3,7 @@
 library;
 
 import 'package:flutter_build_tools/src/config.dart';
+import 'package:flutter_build_tools/src/env_file.dart';
 import 'package:flutter_build_tools/src/keystore.dart';
 import 'package:flutter_build_tools/src/model.dart';
 
@@ -141,6 +142,20 @@ List<Finding> evaluateGuards(GuardInput input) {
             'Fix it in ${input.envFileLabel}${entry.key == 'BASE_URL' && request.baseUrlOverride != null ? ' or --base-url' : ''}, '
             'or build env "local".',
       );
+    }
+    if (isPlaceholderUrl(entry.value)) {
+      final fix =
+          'Replace it in ${input.envFileLabel} with the real server URL (the file was written by "dart run flutter_build_tools init").';
+      final message =
+          '${entry.key} "${entry.value}" is still a placeholder: its host ends in .invalid, which can never resolve. $fix';
+      if (env.isProd) {
+        error('placeholder-url', 'prod $message');
+      } else {
+        warning(
+          'placeholder-url',
+          '$message The binary cannot reach a server until you do.',
+        );
+      }
     }
     if (env.isProd) {
       final marker = devLookingMarker(

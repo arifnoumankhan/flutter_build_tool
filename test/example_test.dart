@@ -12,6 +12,7 @@ import 'package:flutter_build_tools/src/env_file.dart';
 import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/fs.dart';
 import 'package:flutter_build_tools/src/guards.dart';
+import 'package:flutter_build_tools/src/inference.dart';
 import 'package:flutter_build_tools/src/model.dart';
 import 'fakes.dart';
 
@@ -21,32 +22,44 @@ void main() {
   String read(String relative) =>
       File(p.join(root, relative)).readAsStringSync();
 
-  AppConfig minimal() => AppConfig.parse(read('tool/build/build_config.json'));
-  AppConfig full() =>
-      AppConfig.parse(read('tool/build/build_config.full.json'));
+  const fs = IoFs();
+  final path = p.context;
 
-  group('the config files', () {
-    test('build_config.json holds only the required keys', () {
-      final config = minimal();
+  /// What the tool makes of the example with no build_config.json at all.
+  ProjectFacts facts() => inferProjectFacts(fs: fs, path: path, root: root);
+  AppConfig inferred() => AppConfig.fromFacts(facts());
+  AppConfig full() => AppConfig.parse(
+    read('tool/build/build_config.full.json'),
+    inferred: facts(),
+  );
+
+  group('the config', () {
+    test('the example has no build_config.json: it is zero-config', () {
+      expect(
+        File(p.join(root, 'tool', 'build', 'build_config.json')).existsSync(),
+        isFalse,
+      );
+      expect(
+        File(p.join(root, 'tool', 'build', 'build.dart')).existsSync(),
+        isFalse,
+      );
+    });
+
+    test('everything is inferred from the project files', () {
+      final config = inferred();
+      expect(config.app, 'app');
       expect(config.slug, 'ExampleApp');
       expect(config.displayName, 'Example App');
+      expect(config.envDir, 'config/env');
+      expect(config.windowsExe, 'example_app.exe');
+      expect(config.installerScript, 'installer/example_app.iss');
+      expect(config.macosAppName, 'example_app');
+      expect(config.unresolved, isEmpty);
       expect(config.devHostMarkers, isEmpty);
       expect(config.cleanupPrefix, isNull);
       expect(config.docs, isNull);
       expect(config.wrappers, isEmpty);
       expect(config.envSchema.extraKeys, isEmpty);
-      final keys =
-          (jsonDecode(read('tool/build/build_config.json'))
-                  as Map<String, Object?>)
-              .keys;
-      expect(keys, [
-        'app',
-        'slug',
-        'displayName',
-        'envDir',
-        'windows',
-        'macos',
-      ]);
     });
 
     test('build_config.full.json sets every optional key', () {
@@ -58,13 +71,34 @@ void main() {
       expect(config.envSchema.extraKeys, ['FEATURE_SET']);
       expect(config.envSchema.extraUrlKeys, ['ANALYTICS_URL']);
     });
+
+    test('the reference file is not named build_config.json (not read)', () {
+      final keys =
+          (jsonDecode(read('tool/build/build_config.full.json'))
+                  as Map<String, Object?>)
+              .keys;
+      expect(
+        keys,
+        containsAll([
+          'app',
+          'slug',
+          'displayName',
+          'envDir',
+          'windows',
+          'macos',
+          'devHostMarkers',
+          'envFile',
+          'cli',
+        ]),
+      );
+    });
   });
 
   group('the env files', () {
     for (final env in BuildEnv.values) {
       test('${env.name}.json is valid and consistent', () {
         final path = 'config/env/${env.name}.json';
-        for (final config in [minimal(), full()]) {
+        for (final config in [inferred(), full()]) {
           final file = EnvFile.parse(
             path,
             read(path),
@@ -155,6 +189,30 @@ void main() {
       expect(snapshot(), before);
       expect(Directory(p.join(root, 'dist')).existsSync(), isFalse);
       expect(Directory(p.join(root, 'build')).existsSync(), isFalse);
+    });
+
+    test('macos dev --dry-run uses the inferred bundle name', () async {
+      expect(
+        await runBuildTool(['macos', 'dev', '--dry-run'], env),
+        0,
+        reason: console.allText,
+      );
+      expect(
+        console.stdoutText,
+        contains('build/macos/Build/Products/Release/example_app.app'),
+      );
+      expect(
+        console.stdoutText,
+        contains('dist/macos/ExampleApp-dev-v1.0.0.dmg'),
+      );
+    });
+
+    test('windows dev --dry-run plans with the inferred installer', () async {
+      // This machine is a macOS host: the plan is printed, then refused.
+      expect(await runBuildTool(['windows', 'dev', '--dry-run'], env), 1);
+      expect(console.stdoutText, contains('installer/example_app.iss'));
+      expect(console.stdoutText, contains('remove old ExampleApp*.exe'));
+      expect(console.stderrText, contains('error [host-windows]'));
     });
 
     test('web prod --dry-run passes every guard on a clean tree', () async {

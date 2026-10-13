@@ -1,24 +1,33 @@
 # Example project
 
-The smallest project `flutter_build_tools` can build: a pubspec with a
-version, `tool/build/build_config.json`, and one env file per environment.
+The smallest project `flutter_build_tools` can build, and it needs **no
+`tool/build/build_config.json`**: the tool infers everything from the project.
 
 ```bash
 cd example
 dart pub get
 dart run flutter_build_tools --list
 dart run flutter_build_tools web dev --dry-run
-dart run tool/build/build.dart apk preprod --dry-run   # through the shim
+dart run flutter_build_tools macos dev --dry-run      # the bundle is example_app.app
+dart run flutter_build_tools init --dry-run           # what a new project would get
 ```
 
 `--dry-run` prints the resolved profile and the exact commands and builds
 nothing, so it works without the Flutter SDK being used.
 
-| File | Purpose |
+| File | What the tool reads from it |
 |---|---|
-| `tool/build/build_config.json` | The minimal project facts (required keys only) |
-| `tool/build/build_config.full.json` | Every optional key set, for reference; the tool does not read it |
+| `pubspec.yaml` | `name: example_app` gives the slug `ExampleApp` and the title `Example App`; `version:` the artifact version |
+| `windows/CMakeLists.txt` | `BINARY_NAME` gives `windows.exe` (`example_app.exe`) |
+| `macos/Runner/Configs/AppInfo.xcconfig` | `PRODUCT_NAME` gives `macos.appName` (`example_app`) |
+| `installer/example_app.iss` | The only installer script: `windows.installerScript`. It also shows the Inno Setup contract of the `windows` target |
 | `config/env/<env>.json` | One committed, non-secret file per environment |
-| `installer/example_app.iss` | The Inno Setup contract for the `windows` target |
-| `web/index.html` | Holds the `<base href>` the web profile reports |
-| `tool/build/build.dart` | Optional 5-line shim over `runBuildToolCli` |
+| `web/index.html` | The `<base href>` the web profile reports |
+| `tool/build/build_config.full.json` | Every key `build_config.json` knows, for reference; the tool does not read this file |
+
+A real project has the complete `windows/` and `macos/` folders that
+`flutter create` writes; the example keeps only the lines the tool reads.
+
+To override one inferred fact, add `tool/build/build_config.json` with just
+that key (`{"slug": "Shop"}`); `dart run flutter_build_tools init` writes the
+file with all of them.

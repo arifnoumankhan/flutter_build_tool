@@ -1,6 +1,6 @@
 name: flutter_build_tools
 description: One command to build a Flutter app for any platform and environment (apk, web, Windows installer, macOS dmg) with guards, deterministic artifact names, checksums and a manifest.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/arifnoumankhan/flutter_build_tool
 publish_to: none
 
@@ -11,7 +11,9 @@ executables:
   flutter_build_tools:
 
 dependencies:
-  archive: ^3.6.0
+  # 3.6.x and 4.x: the zip is written here and only Deflate and getCrc32 are
+  # taken from the package, which both majors export unchanged.
+  archive: '>=3.6.0 <5.0.0'
   path: ^1.9.1
 
 dev_dependencies:

@@ -1,7 +1,14 @@
 .dart_tool/
 .packages
 pubspec.lock
-build/
+# Build output of this package and of the example project. Anchored, so that
+# example/tool/build/ (project files, not output) is not ignored.
+/build/
+/dist/
+/example/build/
+/example/dist/
 .idea/
+# Per-machine: used to run the tests against another archive major.
+pubspec_overrides.yaml
 *.iml
 .DS_Store

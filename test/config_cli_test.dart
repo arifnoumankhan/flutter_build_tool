@@ -218,10 +218,9 @@ void main() {
 
     group('keeps working when the config cannot be used', () {
       for (final (label, text) in <(String, String?)>[
-        ('is missing', null),
         ('is not JSON', '{oops'),
         ('has a typo in a key', '{"slug": "X", "devHostMarker": []}'),
-        ('has no windows section', '{"app":"x"}'),
+        ('has a slug that is not a word', '{"slug": "not a word"}'),
       ]) {
         test('the config $label', () async {
           final world = TestWorld();

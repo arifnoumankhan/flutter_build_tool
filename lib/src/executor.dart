@@ -6,8 +6,10 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_build_tools/src/commands.dart';
+import 'package:flutter_build_tools/src/config.dart';
 import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/git.dart';
+import 'package:flutter_build_tools/src/inference.dart';
 import 'package:flutter_build_tools/src/job.dart';
 import 'package:flutter_build_tools/src/manifest.dart';
 import 'package:flutter_build_tools/src/model.dart';
@@ -229,11 +231,35 @@ Future<void> _mustRun(
   }
 }
 
+/// How a "not found" error ends. After `--no-build` the output may simply
+/// never have been built, so the remedy is to build; after a build that just
+/// ran, "run without --no-build" would be wrong advice, and [afterBuild] says
+/// what to look at instead.
+String _outputMissingTail(BuildJob job, String afterBuild) =>
+    job.request.noBuild ? 'Run without --no-build.' : afterBuild;
+
+/// Why a platform's output is missing after the build ran, when the name
+/// that was expected comes from [key] in `build_config.json`: when the project
+/// now says something else ([inferred], from [source]) the pinned value is
+/// stale, which is what `init` writes out and a rename of the project makes
+/// wrong.
+String _staleFactTail({
+  required String key,
+  required String configured,
+  required String? inferred,
+  required String source,
+}) {
+  if (inferred != null && inferred != configured) {
+    return 'The Flutter build finished, but "$key" ("$configured") does not match the project: $source now gives "$inferred". Set "$key" to "$inferred" in ${AppConfig.configPath}, or delete the key there to follow the project.';
+  }
+  return 'The Flutter build finished without writing it. Check "$key" ("$configured") in ${AppConfig.configPath} against $source.';
+}
+
 Artifact _packageApk(BuildJob job) {
   final env = job.env;
   if (!env.fs.fileExists(job.builtApk)) {
     throw BuildException(
-      'APK not found at ${env.rel(job.builtApk)} (expected build mode ${job.request.mode.name}). Run without --no-build.',
+      'APK not found at ${env.rel(job.builtApk)} (expected build mode ${job.request.mode.name}). ${_outputMissingTail(job, 'The Flutter build finished without writing it; Android flavors and a moved output folder are not supported (see "Known limits" in the flutter_build_tools README).')}',
     );
   }
   final target = job.distFile('apk');
@@ -245,7 +271,7 @@ Artifact _packageWeb(BuildJob job) {
   final env = job.env;
   if (!env.fs.fileExists(env.path.join(job.builtWebDir, 'index.html'))) {
     throw BuildException(
-      'Web build not found at ${env.rel(job.builtWebDir)} (expected build mode ${job.request.mode.name}). Run without --no-build.',
+      'Web build not found at ${env.rel(job.builtWebDir)} (expected build mode ${job.request.mode.name}). ${_outputMissingTail(job, 'The Flutter build finished without writing index.html there.')}',
     );
   }
   final target = job.distFile('zip');
@@ -266,7 +292,7 @@ void _printDeployHint(BuildJob job) {
   final env = job.env;
   final indexHtml = env.abs('web/index.html');
   final href = env.fs.fileExists(indexHtml)
-      ? parseBaseHref(env.fs.readString(indexHtml))
+      ? servedBaseHref(parseBaseHref(env.fs.readString(indexHtml)))
       : null;
   env.console.out('');
   env.console.out(
@@ -284,7 +310,9 @@ String prepareWindows(BuildJob job) {
   final env = job.env;
   final script = env.abs(job.profile.app.installerScript);
   if (!env.fs.fileExists(script)) {
-    throw BuildException('Missing Inno Setup script ${env.rel(script)}.');
+    throw BuildException(
+      'Missing Inno Setup script ${env.rel(script)}. Create it (the "windows" section of the flutter_build_tools README has the contract, and example/installer/example_app.iss is a template), or point "windows.installerScript" at your script in ${AppConfig.configPath} ("dart run flutter_build_tools init" writes that file; see the "Quick start" section of the README).',
+    );
   }
   if (job.request.mode != BuildMode.release &&
       !env.fs.readString(script).contains('MyBuildMode')) {
@@ -316,7 +344,19 @@ Future<List<Artifact>> _packageWindows(BuildJob job, String iscc) async {
   final console = env.console;
   final exe = env.path.join(job.builtWindowsDir, job.profile.app.windowsExe);
   if (!env.fs.fileExists(exe)) {
-    throw BuildException('Missing ${env.rel(exe)}. Run without --no-build.');
+    final afterBuild = _staleFactTail(
+      key: 'windows.exe',
+      configured: job.profile.app.windowsExe,
+      inferred: inferProjectFacts(
+        fs: env.fs,
+        path: env.path,
+        root: env.root,
+      ).windowsExe,
+      source: 'BINARY_NAME in windows/CMakeLists.txt',
+    );
+    throw BuildException(
+      'Missing ${env.rel(exe)}. ${_outputMissingTail(job, afterBuild)}',
+    );
   }
 
   env.fs.createDir(job.innoOutputDir);
@@ -391,8 +431,18 @@ void _clearOldInstallers(BuildJob job) {
 Future<Artifact> _packageMacos(BuildJob job) async {
   final env = job.env;
   if (!env.fs.dirExists(job.builtMacosApp)) {
+    final afterBuild = _staleFactTail(
+      key: 'macos.appName',
+      configured: job.profile.app.macosAppName,
+      inferred: inferProjectFacts(
+        fs: env.fs,
+        path: env.path,
+        root: env.root,
+      ).macosAppName,
+      source: 'PRODUCT_NAME in macos/Runner/Configs/AppInfo.xcconfig',
+    );
     throw BuildException(
-      'App bundle not found at ${env.rel(job.builtMacosApp)} (expected build mode ${job.request.mode.name}). Run without --no-build.',
+      'App bundle not found at ${env.rel(job.builtMacosApp)} (expected build mode ${job.request.mode.name}). ${_outputMissingTail(job, afterBuild)}',
     );
   }
   final target = job.distFile('dmg');

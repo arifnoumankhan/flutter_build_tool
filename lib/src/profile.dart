@@ -7,6 +7,7 @@ import 'package:flutter_build_tools/src/config.dart';
 import 'package:flutter_build_tools/src/env_file.dart';
 import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/git.dart';
+import 'package:flutter_build_tools/src/inference.dart';
 import 'package:flutter_build_tools/src/model.dart';
 import 'package:flutter_build_tools/src/naming.dart';
 
@@ -118,22 +119,32 @@ Map<String, String> mergeDefines({
   );
 }
 
-/// Reads and validates `tool/build/build_config.json` of the project.
+/// The project's facts: `tool/build/build_config.json` when the project has
+/// one, with every key it leaves out taken from what the project itself states
+/// (`pubspec.yaml`, `windows/CMakeLists.txt`, ...). Without the file all of
+/// them are inferred, so a project builds with no configuration at all.
 AppConfig loadAppConfig(BuildEnvironment env) {
   final path = env.abs(AppConfig.configPath);
+  final facts = inferProjectFacts(fs: env.fs, path: env.path, root: env.root);
   if (!env.fs.fileExists(path)) {
-    throw BuildException(
-      '${AppConfig.configPath} not found. It holds the per-app facts (slug, display name, installer).',
-    );
+    if (facts.pubspecName == null) {
+      throw BuildException(
+        '${AppConfig.configPath} not found and pubspec.yaml has no top-level "name:" to infer the project facts from. '
+        'Add the name to pubspec.yaml, or create ${AppConfig.configPath} with "dart run flutter_build_tools init" (see the "Quick start" section of the flutter_build_tools README).',
+      );
+    }
+    return AppConfig.fromFacts(facts);
   }
-  return AppConfig.parse(env.fs.readString(path));
+  return AppConfig.parse(env.fs.readString(path), inferred: facts);
 }
 
 /// Reads the `version:` of the project's pubspec.yaml.
 PubspecVersion loadPubspecVersion(BuildEnvironment env) {
   final path = env.abs('pubspec.yaml');
   if (!env.fs.fileExists(path)) {
-    throw BuildException('pubspec.yaml not found at $path.');
+    throw BuildException(
+      'pubspec.yaml not found at $path. Run the tool from inside a Flutter project; a project with no build files yet gets them from "dart run flutter_build_tools init" (see the "Quick start" section of the flutter_build_tools README).',
+    );
   }
   return PubspecVersion.parse(env.fs.readString(path));
 }
@@ -159,7 +170,8 @@ EnvFile loadEnvFile(
     throw BuildException(
       customPath != null
           ? 'Env file $shown not found. Check the --env-file path.'
-          : 'Env file $shown not found. Create it ({"APP_ENV": "${buildEnv.name}", "BASE_URL": "https://..."}), see ${app.docs ?? 'the flutter_build_tools README'}.',
+          : 'Env file $shown not found. Create it ({"APP_ENV": "${buildEnv.name}", "BASE_URL": "https://..."}), see ${app.docs ?? 'the flutter_build_tools README'}. '
+                'Run "dart run flutter_build_tools init" to create every missing env file with placeholder URLs (see the "Quick start" section of the flutter_build_tools README).',
     );
   }
   return EnvFile.parse(
@@ -180,6 +192,8 @@ Future<BuildProfile> resolveProfile(
   BuildRequest request,
 ) async {
   final app = loadAppConfig(env);
+  // Windows and macOS facts are only needed when that platform is built.
+  app.requireFactsFor(request.platform);
   final pubspec = loadPubspecVersion(env);
   final override = request.baseUrlOverride;
   if (override != null) {

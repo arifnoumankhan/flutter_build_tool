@@ -243,4 +243,35 @@ void main() {
       );
     });
   });
+
+  group('isPlaceholderUrl', () {
+    for (final url in [
+      'https://dev.replace-me.invalid',
+      'https://prod.replace-me.invalid/api',
+      'https://x.INVALID',
+      'http://invalid',
+      'https://a.b.c.invalid:8443/x',
+    ]) {
+      test(
+        '$url is a placeholder',
+        () => expect(isPlaceholderUrl(url), isTrue),
+      );
+    }
+
+    for (final url in [
+      'https://api.example.com',
+      'https://invalid.example.com',
+      'https://notinvalid.com',
+      'http://127.0.0.1',
+      'https://replace-me.example.org/invalid',
+      'not a url',
+      '',
+    ]) {
+      test('"$url" is not', () => expect(isPlaceholderUrl(url), isFalse));
+    }
+
+    test('the domain init writes is one', () {
+      expect(isPlaceholderUrl('https://dev.$placeholderDomain'), isTrue);
+    });
+  });
 }

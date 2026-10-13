@@ -192,3 +192,16 @@ String? urlProblem(String value) {
   }
   return null;
 }
+
+/// The domain suffix of the placeholder URLs `init` writes. `.invalid` is
+/// reserved (RFC 2606): such a host can never resolve, so a build that still
+/// points at one cannot be mistaken for a working server.
+const String placeholderDomain = 'replace-me.invalid';
+
+/// True when [url] is a placeholder written by `init` (its host is under the
+/// reserved `.invalid` top-level domain) and has to be replaced before the
+/// binary can reach a server. Prod refuses it (guard `placeholder-url`).
+bool isPlaceholderUrl(String url) {
+  final host = Uri.tryParse(url.trim())?.host.toLowerCase() ?? '';
+  return host == 'invalid' || host.endsWith('.invalid');
+}

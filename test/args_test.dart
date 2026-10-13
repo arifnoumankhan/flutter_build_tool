@@ -593,4 +593,71 @@ void main() {
       }
     });
   });
+
+  group('the init command', () {
+    InitArgs init(List<String> args) => parseArgs(args) as InitArgs;
+
+    test('plain init has every switch off', () {
+      final parsed = init(['init']);
+      expect(parsed.force, isFalse);
+      expect(parsed.dryRun, isFalse);
+      expect(parsed.appEnv, isFalse);
+    });
+
+    test('the three switches, in any order and case', () {
+      final parsed = init(['INIT', '--app-env', '--dry-run', '--force']);
+      expect(parsed.force, isTrue);
+      expect(parsed.dryRun, isTrue);
+      expect(parsed.appEnv, isTrue);
+      expect(init(['--force', 'init']).force, isTrue);
+    });
+
+    test('--help wins, as everywhere', () {
+      expect(parseArgs(['init', '--help']), isA<HelpArgs>());
+    });
+
+    test('words and options of a build are refused', () {
+      expect(
+        _errorOf(['init', 'apk']),
+        contains('init takes no platform, environment or mode (got "apk")'),
+      );
+      expect(_errorOf(['init', 'apk', 'dev']), contains('got "apk", "dev"'));
+      expect(
+        _errorOf(['init', '--mode', 'debug']),
+        contains('does not take --mode'),
+      );
+      expect(_errorOf(['init', '--debug']), contains('does not take --debug'));
+      expect(
+        _errorOf(['init', '--no-build']),
+        contains('does not take --no-build'),
+      );
+      expect(_errorOf(['init', '--list']), contains('--list takes no other'));
+    });
+
+    test('--force and --app-env mean nothing for a build', () {
+      expect(
+        _errorOf(['apk', 'dev', '--force']),
+        contains(
+          '--force only applies to the init command (e.g. dart run flutter_build_tools init --force)',
+        ),
+      );
+      expect(
+        _errorOf(['apk', 'dev', '--app-env']),
+        contains('--app-env only applies to the init command'),
+      );
+    });
+
+    test('init is a word of its own, not a platform, env or mode', () {
+      expect(_errorOf(['apk', 'init']), contains('Unknown word "init"'));
+    });
+
+    test('the example of the error uses the invocation', () {
+      try {
+        parseArgs(['init', 'apk'], invocation: 'make build');
+        fail('expected a UsageError');
+      } on UsageError catch (e) {
+        expect(e.message, contains('Example: make build init --dry-run'));
+      }
+    });
+  });
 }

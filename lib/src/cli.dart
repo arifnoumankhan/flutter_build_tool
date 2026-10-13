@@ -2,12 +2,17 @@
 /// print the plan (`--dry-run`) or build.
 library;
 
+import 'dart:io' show FileSystemException;
+
 import 'package:flutter_build_tools/src/args.dart';
 import 'package:flutter_build_tools/src/config.dart';
 import 'package:flutter_build_tools/src/disk.dart';
+import 'package:flutter_build_tools/src/env_file.dart';
 import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/executor.dart';
+import 'package:flutter_build_tools/src/fs.dart';
 import 'package:flutter_build_tools/src/guards.dart';
+import 'package:flutter_build_tools/src/init.dart';
 import 'package:flutter_build_tools/src/job.dart';
 import 'package:flutter_build_tools/src/keystore.dart';
 import 'package:flutter_build_tools/src/model.dart';
@@ -47,6 +52,12 @@ Future<int> runBuildTool(
         return 0;
       case ListArgs():
         return listEnvironments(env);
+      case InitArgs(:final force, :final dryRun, :final appEnv):
+        return await runInit(
+          env,
+          InitOptions(force: force, dryRun: dryRun, appEnv: appEnv),
+          invocation: options.invocation,
+        );
       case BuildArgs(:final request):
         return await _build(env, request);
     }
@@ -56,6 +67,14 @@ Future<int> runBuildTool(
     return 2;
   } on BuildException catch (e) {
     console.err('error: ${e.message}');
+    return 1;
+  } on FileSystemException catch (e) {
+    // A folder or file the tool cannot read or write is an environment
+    // failure like any other (exit 1 with what to do), never a stack trace.
+    final where = e.path == null || e.path!.isEmpty ? '' : ' (${e.path})';
+    console.err(
+      'error: file system problem: ${fileProblem(e)}$where. Check that the path exists and that you may read and write there, then run the command again.',
+    );
     return 1;
   }
 }
@@ -77,6 +96,8 @@ String _usage(BuildEnvironment env, BuildToolOptions options) {
     envDir: app?.envDir ?? AppConfig.defaultEnvDir,
     docs: app?.docs,
     wrappers: app?.wrappers ?? const [],
+    // A project that already has its config does not need the first-run hint.
+    initHint: !env.fs.fileExists(env.abs(AppConfig.configPath)),
   );
 }
 
@@ -170,6 +191,11 @@ List<String> _profileLines(BuildJob job) {
   final lines = <String>[
     'Build profile',
     '  app          ${profile.app.app} (${profile.app.displayName})',
+    // Without the file every fact is inferred, and the guards that only the
+    // file can switch on (devHostMarkers) are off: say so, so a file that was
+    // never committed (or is git-ignored) does not go unnoticed in CI.
+    if (!env.fs.fileExists(env.abs(AppConfig.configPath)))
+      '  config       inferred from the project (no ${AppConfig.configPath})',
     '  target       ${request.platform.name} / ${request.env.name} / ${request.mode.name}',
     '  version      ${profile.version}${profile.buildNumber == null ? '' : ' (build ${profile.buildNumber})'}',
     '  APP_ENV      ${profile.defines['APP_ENV']}',
@@ -186,10 +212,15 @@ List<String> _profileLines(BuildJob job) {
   ];
   if (request.platform == BuildPlatform.web) {
     final indexHtml = env.abs('web/index.html');
-    final href = env.fs.fileExists(indexHtml)
+    final raw = env.fs.fileExists(indexHtml)
         ? parseBaseHref(env.fs.readString(indexHtml))
         : null;
-    lines.add('  base href    ${href ?? '<none>'}   [web/index.html]');
+    final href = servedBaseHref(raw);
+    // The template placeholder is not a path: say what Flutter fills in.
+    final note = raw == flutterBaseHrefPlaceholder
+        ? ': $raw becomes / (no --base-href is passed)'
+        : '';
+    lines.add('  base href    ${href ?? '<none>'}   [web/index.html$note]');
   }
   return lines;
 }
@@ -226,12 +257,14 @@ int listEnvironments(BuildEnvironment env) {
           ? ''
           : '   (APP_ENV is "${file.appEnv}": builds will be refused)';
       console.out(
-        '  ${buildEnv.name.padRight(8)} BASE_URL     ${file.baseUrl}$warning',
+        '  ${buildEnv.name.padRight(8)} BASE_URL     ${file.baseUrl}$warning${_placeholderNote(app, buildEnv, file.baseUrl)}',
       );
       for (final key in app.envSchema.optionalUrlKeys) {
         final value = file.values[key];
         if (value != null) {
-          console.out('  ${''.padRight(8)} ${_label(key)}$value');
+          console.out(
+            '  ${''.padRight(8)} ${_label(key)}$value${_placeholderNote(app, buildEnv, value)}',
+          );
         }
       }
     } on BuildException catch (e) {
@@ -241,6 +274,13 @@ int listEnvironments(BuildEnvironment env) {
   }
   return broken ? 1 : 0;
 }
+
+/// `   (placeholder: edit config/env/dev.json)` for a URL `init` wrote and the
+/// project has not replaced yet; empty otherwise.
+String _placeholderNote(AppConfig app, BuildEnv buildEnv, String url) =>
+    isPlaceholderUrl(url)
+    ? '   (placeholder: edit ${app.envDir}/${buildEnv.name}.json)'
+    : '';
 
 /// A define name padded to the value column of the profile and `--list`.
 String _label(String key) => key.length >= 12 ? '$key ' : key.padRight(13);

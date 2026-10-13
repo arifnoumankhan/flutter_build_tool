@@ -389,21 +389,34 @@ void main() {
     });
   });
 
-  test('the required keys are still required', () {
-    for (final key in [
-      'app',
-      'slug',
-      'displayName',
-      'envDir',
-      'windows',
-      'macos',
-    ]) {
-      final config = minimal()..remove(key);
-      expect(
-        () => parse(config),
-        throwsA(isA<BuildException>()),
-        reason: 'without "$key"',
-      );
+  test(
+    'parsed on its own (nothing inferred), the four basic keys are required',
+    () {
+      for (final key in ['app', 'slug', 'displayName', 'envDir']) {
+        final config = minimal()..remove(key);
+        expect(
+          () => parse(config),
+          failsWith('"$key" must be a non-empty string'),
+          reason: 'without "$key"',
+        );
+      }
+    },
+  );
+
+  test('the windows and macos sections are optional', () {
+    for (final key in ['windows', 'macos']) {
+      final config = parse(minimal()..remove(key));
+      expect(config.slug, 'ExampleApp', reason: 'without "$key"');
     }
+    final bare = parse(
+      minimal()
+        ..remove('windows')
+        ..remove('macos'),
+    );
+    expect(bare.unresolved.keys, [
+      'windows.exe',
+      'windows.installerScript',
+      'macos.appName',
+    ]);
   });
 }

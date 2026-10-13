@@ -462,6 +462,71 @@ void main() {
     });
   });
 
+  group('placeholder-url', () {
+    const placeholder = 'https://prod.replace-me.invalid';
+
+    test('prod refuses a placeholder host, with its own code', () {
+      final findings = guards(
+        req(BuildPlatform.web, BuildEnv.prod),
+        baseUrl: placeholder,
+      );
+      expect(errors(findings), ['placeholder-url']);
+      final message = findings.single.message;
+      expect(
+        message,
+        contains('prod BASE_URL "$placeholder" is still a placeholder'),
+      );
+      expect(message, contains('config/env/prod.json'));
+      expect(message, contains('dart run flutter_build_tools init'));
+    });
+
+    test('dev only warns: the build is allowed, the person is told', () {
+      final findings = guards(
+        req(BuildPlatform.web, BuildEnv.dev),
+        baseUrl: 'https://dev.replace-me.invalid',
+      );
+      expect(errors(findings), isEmpty);
+      expect(warnings(findings), ['placeholder-url']);
+      expect(findings.single.message, contains('cannot reach a server'));
+    });
+
+    test('every URL key is checked, naming the key', () {
+      final findings = guards(
+        req(BuildPlatform.web, BuildEnv.prod),
+        posWebUrl: 'https://pos.replace-me.invalid',
+        extraUrls: const {'ANALYTICS_URL': 'https://a.replace-me.invalid'},
+      );
+      expect(errors(findings), ['placeholder-url', 'placeholder-url']);
+      expect(
+        findings.map((f) => f.message).join('\n'),
+        allOf(contains('POS_WEB_URL'), contains('ANALYTICS_URL')),
+      );
+    });
+
+    test('a real host and local are not placeholders', () {
+      expect(guards(req(BuildPlatform.web, BuildEnv.prod)), isEmpty);
+      expect(
+        guards(
+          req(BuildPlatform.web, BuildEnv.local),
+          baseUrl: 'http://127.0.0.1',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a --base-url override that is a placeholder is refused too', () {
+      final findings = guards(
+        req(
+          BuildPlatform.web,
+          BuildEnv.prod,
+          baseUrl: placeholder,
+          allowProdOverride: true,
+        ),
+      );
+      expect(errors(findings), ['placeholder-url']);
+    });
+  });
+
   group('prod-override', () {
     test('--base-url on prod needs --allow-prod-override', () {
       final refused = guards(

@@ -2,6 +2,7 @@
 // runner and console, bundled in [TestWorld] with a seeded repository.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show FileSystemException, OSError;
 
 import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/fs.dart';
@@ -119,6 +120,37 @@ class MemoryFs implements BuildFs {
     for (final e in files.entries) e.key: base64.encode(e.value),
     for (final d in dirs) '$d/': 'dir',
   };
+}
+
+/// A file system that cannot be written at the paths [denied] says (a folder
+/// without permission, or a file where a folder should be): the write throws a
+/// [FileSystemException] like the real disk does.
+class DenyingFs extends MemoryFs {
+  DenyingFs(this.denied, {super.separator, super.tempRoot});
+
+  final bool Function(String path) denied;
+
+  void _check(String path) {
+    if (denied(path)) {
+      throw FileSystemException(
+        'Creation failed',
+        path,
+        OSError('Permission denied', 13),
+      );
+    }
+  }
+
+  @override
+  void writeString(String path, String content) {
+    _check(path);
+    super.writeString(path, content);
+  }
+
+  @override
+  void writeBytes(String path, List<int> bytes) {
+    _check(path);
+    super.writeBytes(path, bytes);
+  }
 }
 
 class _Handler<T> {
@@ -277,6 +309,57 @@ const _envFiles = {
 
 const fixedNow = '2026-10-06T12:34:56Z';
 
+/// `web/index.html` as `flutter create` writes it (Flutter's own template,
+/// with the multi-line comment): `<base href>` is the placeholder Flutter
+/// replaces at build time.
+const stockIndexHtml = r'''<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="example_app">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>example_app</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
+''';
+
 /// A repository on a fake machine: environment, file system, runner, console.
 class TestWorld {
   TestWorld({
@@ -313,6 +396,24 @@ class TestWorld {
   final List<Duration> sleeps = [];
 
   String abs(String relative) => env.abs(relative);
+
+  /// The environment of this world on [other] instead of its own file system,
+  /// holding the same files: for a test that needs a disk that misbehaves.
+  BuildEnvironment envOn(MemoryFs other) {
+    other
+      ..files.addAll(fs.files)
+      ..dirs.addAll(fs.dirs);
+    return BuildEnvironment(
+      root: env.root,
+      host: host,
+      vars: env.vars,
+      fs: other,
+      runner: runner,
+      console: console,
+      now: env.now,
+      sleep: env.sleep,
+    );
+  }
 
   /// Writes pubspec, app config, the four env files, web/index.html and the
   /// Inno script, like a real checkout.

@@ -1,7 +1,24 @@
 # flutter_build_tools
+## Quick start
+```yaml
+# pubspec.yaml
+dev_dependencies:
+  flutter_build_tools:
+    git: {url: 'https://github.com/arifnoumankhan/flutter_build_tool.git', ref: v0.2.0}
+```
+```bash
+flutter pub get
+dart run flutter_build_tools init      # writes tool/build/build_config.json, config/env/*.json, scripts/ (offline; never overwrites)
+# edit BASE_URL in config/env/dev.json, preprod.json, prod.json (init writes placeholders; prod refuses them)
+dart run flutter_build_tools apk dev   # -> dist/android/<Name>-dev-v<version>.apk (+ .sha256, .json); --dry-run looks first
+# CI: flutter pub get && dart run flutter_build_tools apk preprod    (the exit code is the result)
+```
 
-One command builds a Flutter app for any platform and any environment, and
-the file name says exactly what is inside:
+One command builds a Flutter app for any platform and any environment, and the
+file name says exactly what is inside. A new project needs the dependency and
+`init`; everything else is inferred from the project (name, `windows/`,
+`macos/`, `installer/`), and a file in `tool/build/` or `config/env/` only
+says what differs.
 
 ```bash
 dart run flutter_build_tools apk release preprod
@@ -14,7 +31,8 @@ dart run flutter_build_tools windows release prod        # on a Windows machine
 
 It is a pure Dart package (no Flutter SDK dependency), so it runs from any
 Flutter project that lists it as a dev dependency. Everything that differs
-between projects (name, installer, extra guard hints) lives in the project, in
+between projects (name, installer, extra guard hints) is read from the project
+itself (`pubspec.yaml`, `windows/`, `macos/`, `installer/`) and can be set in
 `tool/build/build_config.json` and `config/env/<env>.json`; the tool itself is
 the same for every app.
 
@@ -36,21 +54,22 @@ What you get over a hand-written `flutter build` script:
 
 ## Contents
 
-1. [Requirements](#requirements)
-2. [Install](#install)
-3. [Quick start](#quick-start)
-4. [Command line reference](#command-line-reference)
-5. [`build_config.json`](#build_configjson)
-6. [Env files](#env-files)
-7. [Artifact names, checksums, manifest](#artifact-names-checksums-and-manifest)
-8. [Guards](#guards)
-9. [Per platform](#per-platform)
-10. [`--no-build` and the build stamp](#--no-build-and-the-build-stamp)
-11. [CI](#ci)
-12. [Embedding it](#embedding-it)
-13. [Extending it](#extending-it)
-14. [Known limits](#known-limits)
-15. [Development](#development)
+1. [Quick start](#quick-start) (above)
+2. [Requirements](#requirements)
+3. [Install](#install)
+4. [`init` and what is inferred](#init-and-what-is-inferred)
+5. [Command line reference](#command-line-reference)
+6. [`build_config.json`](#build_configjson)
+7. [Env files](#env-files)
+8. [Artifact names, checksums, manifest](#artifact-names-checksums-and-manifest)
+9. [Guards](#guards)
+10. [Per platform](#per-platform)
+11. [`--no-build` and the build stamp](#--no-build-and-the-build-stamp)
+12. [CI](#ci)
+13. [Embedding it](#embedding-it)
+14. [Extending it](#extending-it)
+15. [Known limits](#known-limits)
+16. [Development](#development)
 
 ## Requirements
 
@@ -79,13 +98,21 @@ dev_dependencies:
   flutter_build_tools:
     git:
       url: https://github.com/arifnoumankhan/flutter_build_tool.git
-      ref: v0.1.0
+      ref: v0.2.0
 ```
 
-Then run `flutter pub get` in the app. Until you do, `dart run
-flutter_build_tools` answers "Couldn't resolve the package". To upgrade, move
-`ref` to a newer tag (see `CHANGELOG.md`) and run `flutter pub upgrade
-flutter_build_tools`.
+Then run `flutter pub get` in the app (`dart run` also resolves a declared
+dependency by itself). A project that does not list the package gets Dart's
+own "Could not find package" error (exit code 255), and a
+shim that imports it gets `Couldn't resolve the package`: those are Dart's
+messages, before this tool runs. To upgrade, move `ref` to a newer tag (see
+`CHANGELOG.md`) and run `flutter pub upgrade flutter_build_tools`.
+
+The package needs `archive` and `path` and accepts `archive` 3.6.x and 4.x
+(`>=3.6.0 <5.0.0`), so an app that already uses archive 4 resolves. The zip of
+the web build is written by the tool itself, with the Deflate and CRC-32 that
+both archive majors export, so the artifact is byte-for-byte the same whichever
+archive version the app has (see [web](#web)).
 
 To work on the tool and an app side by side, keep the committed pubspec on the
 tag and point at your checkout in a per-machine, git-ignored
@@ -97,37 +124,82 @@ dependency_overrides:
     path: ../flutter_build_tool
 ```
 
-## Quick start
+## `init` and what is inferred
 
-A project needs three things.
+`init` writes every file a project needs, from the project itself. It works
+offline, from any folder inside the project, never edits `lib/main.dart`, and
+creates only what is missing:
 
-**1. The project's facts**, `tool/build/build_config.json`:
-
-```json
-{
-  "app": "example",
-  "slug": "ExampleApp",
-  "displayName": "Example App",
-  "envDir": "config/env",
-  "windows": {
-    "exe": "example_app.exe",
-    "installerScript": "installer/example_app.iss"
-  },
-  "macos": { "appName": "Example App" }
-}
+```bash
+dart run flutter_build_tools init [--force] [--dry-run] [--app-env]
 ```
 
-**2. One env file per environment**, `config/env/dev.json`, `preprod.json`,
-`prod.json`, `local.json`:
+| It creates | Content |
+|---|---|
+| `tool/build/build_config.json` | The inferred facts, written out as explicit values so you can edit them (a `$comment` key is allowed: keys starting with `$` or `_` are ignored). Only the keys it could infer; the rest it lists |
+| `config/env/dev.json`, `preprod.json`, `prod.json` | `APP_ENV` and a `BASE_URL` placeholder (`https://<env>.replace-me.invalid`). Placeholders cannot be reached; prod refuses them (`placeholder-url`), dev and preprod only warn |
+| `config/env/local.json` | `APP_ENV` and `http://127.0.0.1` |
+| `scripts/build.sh`, `scripts/build.ps1` | Thin wrappers: `dart run flutter_build_tools "$@"`. `build.sh` is made executable |
+| `lib/config/app_env.dart` (`lib/app_env.dart` when `lib/config/` does not exist), with `--app-env` | A small `AppEnv` class reading `APP_ENV`, `BASE_URL` and `BUILD_SHA` through `String.fromEnvironment`; the one-liner for `main.dart` is printed |
 
-```json
-{
-  "APP_ENV": "preprod",
-  "BASE_URL": "https://preprod.example.com/api"
-}
-```
+| Switch | Effect |
+|---|---|
+| (none) | Create what is missing, list what was created and what was skipped |
+| `--dry-run` | List what would be written; write nothing |
+| `--force` | Overwrite existing files. An env file keeps every key but `APP_ENV` and `BASE_URL` (so `POS_WEB_URL` and your own `envFile.extraKeys` values survive), and a `BASE_URL` that was a real one is reported (`BASE_URL was ...`); a config file keeps every key you set in it; a script or `AppEnv` whose text is not init's own is reported as `custom content replaced`. `--dry-run --force` reports the same, and writes nothing |
+| `--app-env` | Also write `AppEnv` |
 
-**3. A pubspec with a version** (`version: 1.0.47+47`).
+It prints the next steps and every fact it could not infer, and it refuses
+outside a Flutter project (no `pubspec.yaml` in the folder or above it) with
+exit code 2 when the tool itself runs (a shim, `dart bin/flutter_build_tools.dart`,
+an embedder); `dart run flutter_build_tools` fails earlier, with Dart's own
+"Found no pubspec.yaml file" and exit code 255 (see [exit
+codes](#exit-codes)). Run it again at any time: nothing it has written is
+touched.
+
+Three things it checks and only reports, never changes:
+
+- **Keys the config does not declare.** An env file that already holds a key
+  the tool does not accept (`USE_DUMMY`, say) makes `--list` and every build
+  refuse it as an `unknown key`. `init` lists such keys with the snippet that
+  declares them (`"envFile": {"extraKeys": ["USE_DUMMY"]}` in
+  `tool/build/build_config.json`; `extraUrlKeys` for URLs). It never adds them
+  itself: an env file is committed, so what counts as a secret is your call.
+- **Files git ignores.** `git check-ignore` is asked (read-only, silent when
+  git is missing or the folder is not a repository) about the config and the
+  env files. A rule such as `build/` also matches `tool/build/`, so a clone or
+  CI checkout would not have `build_config.json` and would infer every fact in
+  it. Anchor the rule (`/build/`) or `git add -f` the file.
+- **`.gitignore` without `dist/`**, which makes the next prod build refuse the
+  tree as dirty.
+
+### Zero-config: what is inferred when there is no file
+
+Without `tool/build/build_config.json` (and for every key the file leaves
+out) the tool reads the project:
+
+| Fact | Inferred from |
+|---|---|
+| `slug` | PascalCase of the pubspec `name`, letters and digits only (`my_cool_app` gives `MyCoolApp`) |
+| `displayName` | The pubspec name as a title (`My Cool App`) |
+| `app` | `app` |
+| `envDir` | `config/env` |
+| `windows.exe` | `BINARY_NAME` of `windows/CMakeLists.txt`, plus `.exe` |
+| `windows.installerScript` | The one `installer/*.iss`, when there is exactly one |
+| `macos.appName` | `PRODUCT_NAME` of `macos/Runner/Configs/AppInfo.xcconfig` |
+
+The file always wins, key by key: `{"slug": "Shop"}` sets the artifact prefix
+and infers the rest, and `{}` is a complete config. The `windows` and `macos`
+facts are needed only when that platform is built: a mobile-only project
+builds `apk` and `web` without them, and `windows` or `macos` then stops
+before anything runs with an error that names the missing fact, why it could
+not be inferred, and how to set it. `init` writes what is inferred, so the
+behaviour before and after it is the same, with one visible difference: every
+build profile of a project without the file has the line `config       inferred
+from the project (no tool/build/build_config.json)`. It is there so that a file
+that was never committed (or is git-ignored) is noticed in CI: what only the
+file can set (`devHostMarkers`, `slug`, `cleanupPrefix`, `cli.*`) is then at
+its inferred or neutral value.
 
 Then look first, build second:
 
@@ -137,13 +209,16 @@ dart run flutter_build_tools apk preprod --dry-run     # profile, commands, guar
 dart run flutter_build_tools apk release preprod       # the build
 ```
 
-`example/` is a complete minimal project you can try these on.
+`example/` is a complete minimal project you can try these on; it has no
+`build_config.json` at all.
 
-### Keeping your own entry point and wrapper scripts
+### Keeping your own entry point and wrapper scripts (optional)
 
 `dart run flutter_build_tools` works from any folder inside the project (the
-nearest `pubspec.yaml` is the project). If you prefer a path inside the
-project, or wrapper scripts that call one, add a five-line shim:
+nearest `pubspec.yaml` is the project), and `init` writes wrapper scripts that
+call it. You only need a shim if you prefer a path inside the project (an
+existing project with its own scripts keeps working as it is). It is five
+lines:
 
 ```dart
 // tool/build/build.dart
@@ -176,6 +251,7 @@ List the wrapper scripts under `cli.wrappers` in `build_config.json` to have
 ```
 dart run flutter_build_tools <platform> <env> [mode] [options]
 dart run flutter_build_tools                 (interactive picker, in a terminal)
+dart run flutter_build_tools init [--force] [--dry-run] [--app-env]   (see `init`, above)
 ```
 
 ### Platforms, environments, modes
@@ -214,6 +290,7 @@ command line is answered with what was expected and one example.
 | `--dry-run` | Print the resolved profile, the exact commands and the guard verdict; build nothing |
 | `--list` | Show platforms, envs and their resolved URLs (takes no other argument) |
 | `-h`, `--help` | The usage text (works even when the config is broken) |
+| `--force`, `--app-env` | `init` only (see [`init`](#init-and-what-is-inferred)); `--dry-run` also applies to `init` |
 
 Options that take a value accept `--name value` and `--name=value`.
 
@@ -224,6 +301,18 @@ Options that take a value accept `--name value` and `--name=value`.
 | `0` | Built (or dry run / list / help succeeded) |
 | `1` | A build, guard or environment failure. Every error says what to do. A dry run exits `1` when a real run would be refused, and still prints the plan |
 | `2` | A bad command line, or not run inside a Flutter project |
+
+A write the operating system refuses (a read-only folder, a file where a
+folder should be) is an exit `1` that names the path, never a stack trace;
+`init` also lists what it had already written.
+
+Exit `2` for "not inside a Flutter project" comes from the tool, so it is what
+you get through a shim, `dart bin/flutter_build_tools.dart` or the embedding
+API. `dart run flutter_build_tools` itself looks for a `pubspec.yaml` first:
+with none in the folder or above it, Dart prints "Found no pubspec.yaml file
+in ... or parent directories" and exits `255`, and the same exit code comes
+with "Could not find package flutter_build_tools" when the project does not
+list the dependency. Those two are Dart's, before this tool starts.
 
 ### Interactive picker
 
@@ -248,30 +337,60 @@ Setup is installed.
 
 ## `build_config.json`
 
-`tool/build/build_config.json` holds the facts of one project. Its location is
-fixed. Unknown keys are an error (a typo in `devHostMarkers` would otherwise
-silently disable a guard); keys starting with `$` or `_` are ignored, so a
-file may carry `$schema` or `_comment`.
+`tool/build/build_config.json` holds the facts of one project. **Every key is
+optional**: a key the file leaves out is inferred from the project (see
+[zero-config](#zero-config-what-is-inferred-when-there-is-no-file)), and
+without the file everything is. Its location is fixed. Unknown keys are an
+error (a typo in `devHostMarkers` would otherwise silently disable a guard);
+keys starting with `$` or `_` are ignored, so a file may carry `$schema` or
+`$comment`. `dart run flutter_build_tools init` writes the file with the
+inferred values.
 
-| Key | Type | Required | Default | Effect and validation |
-|---|---|---|---|---|
-| `app` | string | yes | | Short id of the app; written to the manifest as `app` and shown in the profile |
-| `slug` | string | yes | | Prefix of every artifact name. Letters and digits only |
-| `displayName` | string | yes | | Human name: the title of `--help`, the first line of `--list`, the DMG volume name |
-| `envDir` | string | yes | | Folder with the `<env>.json` files, `/`-separated, relative to the project root (`config/env`) |
-| `windows.exe` | string | yes | | File name of the Windows runner in `build/windows/x64/runner/<Mode>/` (`BINARY_NAME` in `windows/CMakeLists.txt`) |
-| `windows.installerScript` | string | yes | | Inno Setup script, relative to the project root |
-| `windows.cleanupPrefix` | string | no | the `slug` | Installers in `build/windows/installers` whose name starts with this (case-sensitive) and ends in `.exe` are deleted before a new one is compiled, so a stale installer is never mistaken for the new one. Must start with a letter or digit and may contain letters, digits, space, `.`, `_`, `-` (it decides which files are deleted, so no separators or wildcards) |
-| `macos.appName` | string | yes | | Bundle name without `.app`; must equal `PRODUCT_NAME` in `macos/Runner/Configs/AppInfo.xcconfig` |
-| `devHostMarkers` | string[] | no | `[]` | Extra substrings that make a prod URL look like a dev server, compared case-insensitively against the whole URL and checked before the built-in ones (see [Guards](#guards)). Entries are trimmed and must not be empty |
-| `envFile.extraKeys` | string[] | no | `[]` | Extra plain-string keys an env file may hold. `UPPER_SNAKE_CASE`; not `APP_ENV`, `BASE_URL`, `POS_WEB_URL`, `BUILD_SHA`; no duplicates |
-| `envFile.extraUrlKeys` | string[] | no | `[]` | Extra URL keys: validated like `BASE_URL`, held to https outside `local`, checked by the prod dev-URL guard, listed in the profile and `--list`, compared by `--no-build`, written to the manifest as `extraUrls`. Same naming rules |
-| `cli.docs` | string | no | the package README | Where the project's own build documentation lives; named in `--help` and in the "env file not found" error |
-| `cli.wrappers` | `{script, label}[]` | no | `[]` | Wrapper scripts listed in `--help`, for example `{"script": "scripts/build.sh", "label": "macOS/Linux wrapper"}` |
+| Key | Type | Default (when the file leaves it out) | Effect and validation |
+|---|---|---|---|
+| `app` | string | `app` | Short id of the app; written to the manifest as `app` and shown in the profile |
+| `slug` | string | PascalCase of the pubspec name | Prefix of every artifact name. Letters and digits only |
+| `displayName` | string | the pubspec name as a title | Human name: the title of `--help`, the first line of `--list`, the DMG volume name |
+| `envDir` | string | `config/env` | Folder with the `<env>.json` files, `/`-separated, relative to the project root |
+| `windows.exe` | string | `BINARY_NAME` of `windows/CMakeLists.txt` + `.exe` | File name of the Windows runner in `build/windows/x64/runner/<Mode>/`. Needed only to build `windows` |
+| `windows.installerScript` | string | the only `installer/*.iss` | Inno Setup script, relative to the project root. Needed only to build `windows` |
+| `windows.cleanupPrefix` | string | the `slug` | Installers in `build/windows/installers` whose name starts with this (case-sensitive) and ends in `.exe` are deleted before a new one is compiled, so a stale installer is never mistaken for the new one. Must start with a letter or digit and may contain letters, digits, space, `.`, `_`, `-` (it decides which files are deleted, so no separators or wildcards) |
+| `macos.appName` | string | `PRODUCT_NAME` of `macos/Runner/Configs/AppInfo.xcconfig` | Bundle name without `.app`. Needed only to build `macos` |
+| `devHostMarkers` | string[] | `[]` | Extra substrings that make a prod URL look like a dev server, compared case-insensitively against the whole URL and checked before the built-in ones (see [Guards](#guards)). Entries are trimmed and must not be empty |
+| `envFile.extraKeys` | string[] | `[]` | Extra plain-string keys an env file may hold. `UPPER_SNAKE_CASE`; not `APP_ENV`, `BASE_URL`, `POS_WEB_URL`, `BUILD_SHA`; no duplicates |
+| `envFile.extraUrlKeys` | string[] | `[]` | Extra URL keys: validated like `BASE_URL`, held to https outside `local`, checked by the prod dev-URL guard, listed in the profile and `--list`, compared by `--no-build`, written to the manifest as `extraUrls`. Same naming rules |
+| `cli.docs` | string | the package README | Where the project's own build documentation lives; named in `--help` and in the "env file not found" error |
+| `cli.wrappers` | `{script, label}[]` | `[]` | Wrapper scripts listed in `--help`, for example `{"script": "scripts/build.sh", "label": "macOS/Linux wrapper"}` |
 
-Every optional key has a default that reproduces the behaviour of a project
-that does not set it. `example/tool/build/build_config.full.json` sets every
-key.
+A `windows` or `macos` fact that is neither in the file nor inferable is not
+an error until that platform is built.
+
+`init` writes `windows.exe` and `macos.appName` as explicit values, so a later
+rename of `BINARY_NAME` or `PRODUCT_NAME` must be followed there (or delete
+the keys to follow the project again). A build that finishes without the
+expected bundle or exe says which key is out of date and what the project now
+gives, rather than telling you to run without `--no-build`; that remedy is
+only given when you did pass `--no-build`.
+
+### Defaults of the optional keys
+
+The optional keys default to the neutral behaviour of a project that sets
+none of them: no extra dev host marker, the slug as installer cleanup prefix,
+no extra env file keys, the package README as the documentation and no
+wrapper scripts in `--help`. A project that moves over from its own build
+scripts sets the keys for anything those scripts did differently:
+
+| What the previous scripts did | Key to set |
+|---|---|
+| Refused a prod URL containing a project-specific dev host name | `"devHostMarkers": ["devhost"]` |
+| Deleted old installers by a prefix that is not the slug | `"windows": {"cleanupPrefix": "Prefix"}` |
+| Accepted more keys in the env files | `"envFile": {"extraKeys": [...], "extraUrlKeys": [...]}` |
+| Pointed `--help` at their own documentation and wrapper scripts | `"cli": {"docs": "tool/build/README.md", "wrappers": [{"script": "scripts/build.sh", "label": "macOS/Linux wrapper"}]}` |
+| Used an artifact prefix or a bundle name that is not the pubspec name | `"slug"`, `"displayName"`, `"macos": {"appName": ...}` |
+
+Without them the tool still builds, but a guard, a cleanup or a help line that
+the old script had is missing. `example/tool/build/build_config.full.json`
+sets every key.
 
 ## Env files
 
@@ -290,10 +409,14 @@ is committed, so it must never hold secrets.
 |---|---|---|
 | `APP_ENV` | yes | Must equal the file name (`preprod.json` says `"preprod"`) |
 | `BASE_URL` | yes | API origin including any path prefix, no trailing slash. https for every env except `local` |
-| `POS_WEB_URL` | no | An optional second origin (built in because the apps this tool came from use it). Validated like `BASE_URL` |
+| `POS_WEB_URL` | no | An optional second origin (for example a web POS or a companion site). Validated like `BASE_URL` |
 | `envFile.extraKeys` / `envFile.extraUrlKeys` | no | Whatever the project declares in `build_config.json` |
 
-Any other key is rejected, so a typo cannot be silently ignored by the app.
+Any other key is rejected, so a typo cannot be silently ignored by the app. A
+key that is meant (`USE_DUMMY`, `SHOP_URL`) is allowed by declaring it in
+`tool/build/build_config.json` under `envFile.extraKeys` (plain strings) or
+`envFile.extraUrlKeys` (URLs); `dart run flutter_build_tools init` lists the
+undeclared keys of the env files it finds and prints that snippet.
 `BUILD_SHA` is generated by the tool and refused in a file. A URL must be an
 absolute `http(s)` URL without whitespace, credentials, query string, fragment
 or trailing slash.
@@ -341,8 +464,11 @@ Every artifact gets two sidecar files named after the full file name:
 | `ExampleApp-preprod-v1.0.47.apk.sha256` | `<hash>  <file name>`, the `sha256sum` format. Verify with `shasum -a 256 -c ExampleApp-preprod-v1.0.47.apk.sha256` in that folder |
 | `ExampleApp-preprod-v1.0.47.apk.json` | the build manifest |
 
-`dist/` and `build/` should be git-ignored. At the end the tool prints the
-path, size and SHA-256.
+`/dist/` and `/build/` should be git-ignored, **anchored** with the leading
+slash: a bare `build/` rule also matches `tool/build/`, where
+`build_config.json` lives, so the file is silently left out of every commit
+and a CI clone infers its facts. `init` checks this with `git check-ignore`.
+At the end the tool prints the path, size and SHA-256.
 
 ### Manifest, schema 1
 
@@ -372,6 +498,7 @@ not stop the build.
 | `app-env-mismatch` | `APP_ENV` in the env file equals the requested env | error | Fix the file |
 | `not-https` | `BASE_URL`, `POS_WEB_URL` and every extra URL key are https unless env is `local` | error | Use https, or build env `local` |
 | `prod-dev-url` | prod refuses a URL that looks like dev or local: the project's `devHostMarkers`, then `localhost`, `127.0.0.1`, `::1`, `10.0.2.2`, `192.168.` and `10.x` hosts | error | Fix the prod env file |
+| `placeholder-url` | a URL whose host ends in `.invalid` (what `init` writes) is still a placeholder. Prod refuses it; other envs warn, because the binary cannot reach a server | error on prod (warning elsewhere) | Put the real URL in the env file |
 | `prod-override` | prod refuses `--base-url` and `--env-file` unless `--allow-prod-override` is given | error | Edit and commit `<envDir>/prod.json`, or pass the flag |
 | `prod-mode` | prod is release only | error | Drop `--debug` / `--profile` |
 | `dirty-tree` | prod needs a clean git tree (also when git cannot tell) | error on prod (warning elsewhere) | Commit or stash, or `--allow-dirty` |
@@ -409,11 +536,26 @@ The site is zipped from `build/web` with the files at the zip root (so it
 extracts straight into the site folder), without `.DS_Store`, `__MACOSX/`,
 `.last_build_id` or `*.zip`.
 
+The zip is a pure function of the file names, their content and the build
+time: entries are sorted, permissions are fixed, there is no random value, and
+the entry times are the build time **in UTC** (0.1.0 wrote the machine's local
+time, so the same build gave different bytes in another time zone). It is
+written by the tool, using only `Deflate` and `getCrc32` of `package:archive`
+(unchanged in 3.6.x and 4.x), so the bytes do not change with the archive
+version either: `archive` 4 would otherwise compress with the native zlib and
+produce a different file. A plain zip holds at most 65535 files and 4 GiB; the
+tool says so instead of writing a corrupt zip.
+
 The tool reads the `<base href>` from `web/index.html` (a line inside an HTML
 comment is skipped), shows it in the profile and prints a deploy hint: extract
 into the folder served at that path, purge the CDN cache, and never
 long-cache `index.html` and `flutter_service_worker.js`. The tool does not
-pass `--base-href` to Flutter: the href is whatever `web/index.html` says.
+pass `--base-href` to Flutter: the href is whatever `web/index.html` says. The
+`index.html` that `flutter create` writes says `$FLUTTER_BASE_HREF`, a
+placeholder Flutter replaces with the `--base-href` of the build, which is `/`
+when none is passed: the profile then reads `/` and says so, and the deploy
+hint names `/`. A project that serves the site from a folder hardcodes it
+(`<base href="/web_admin/">`) and the tool shows exactly that.
 
 ### windows
 
@@ -500,39 +642,42 @@ import 'package:flutter_build_tools/flutter_build_tools.dart';
 | Symbol | Purpose |
 |---|---|
 | `runBuildToolCli(args, projectRoot:, options:, environment:)` | The process entry: checks for `pubspec.yaml`, runs the tool, returns the exit code. Set `exitCode =` from it |
+| `runBuildToolFromDirectory(args, directory:, fs:, console:, ...)` | What `bin/flutter_build_tools.dart` does once Dart has started it: finds the project from any folder inside it (`findProjectRoot`), exit code 2 when there is none (`dart run flutter_build_tools` never gets that far without a `pubspec.yaml`: Dart exits 255 first). `fs` and `console` are seams, so "outside a project" is testable on any machine |
 | `runBuildTool(args, environment, options:)` | The injectable core: takes a `BuildEnvironment` |
 | `BuildToolOptions(invocation:)` | The command shown in help and error messages (default `dart run flutter_build_tools`) |
 | `BuildEnvironment`, `Console`, `StdConsole`, `BuildFs`, `IoFs`, `ProcessRunner`, `IoProcessRunner`, `ProcessSpec`, `CapturedProcess`, `ProcessStartException` | The seams: replace them to run the tool against an in-memory file system and a scripted process runner |
-| `AppConfig`, `WrapperScript`, `PubspecVersion` | The project facts and the pubspec version |
-| `EnvFile`, `EnvSchema`, `urlProblem` | Env file parsing and validation |
+| `AppConfig`, `WrapperScript`, `PubspecVersion`, `loadAppConfig` | The project facts (the file, completed by inference) and the pubspec version |
+| `ProjectFacts`, `inferProjectFacts`, `slugFromPubspecName`, `displayNameFromPubspecName` | What is inferred, as a pure function over `BuildFs` |
+| `runInit`, `InitOptions` | The `init` command as a function |
+| `EnvFile`, `EnvSchema`, `urlProblem`, `isPlaceholderUrl`, `loadEnvFile` | Env file parsing and validation |
 | `BuildPlatform`, `BuildEnv`, `BuildMode`, `BuildRequest`, `HostOs`, `BuildException`, `UsageError` | The value types |
 | `artifactBaseName`, `artifactFileName` | The naming rule |
 | `evaluateGuards`, `GuardInput`, `Finding`, `Severity`, `devLookingMarker` | The guards as a pure function |
 
 A project's own test can check that its configuration is valid for the tool
-(a typo is then caught in the app's suite):
+(a typo is then caught in the app's suite). It needs only `dart:io`, this
+package and `flutter_test`, which every Flutter app has:
 
 ```dart
 import 'dart:io';
 
 import 'package:flutter_build_tools/flutter_build_tools.dart';
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('build config and env files are valid for the build tool', () {
-    final config = AppConfig.parse(File(AppConfig.configPath).readAsStringSync());
-    for (final env in BuildEnv.values) {
-      final path = '${config.envDir}/${env.name}.json';
-      final file = EnvFile.parse(
-        path,
-        File(path).readAsStringSync(),
-        schema: config.envSchema,
-      );
-      expect(file.appEnv, env.name);
+    final env = BuildEnvironment.system(Directory.current.path);
+    final config = loadAppConfig(env); // the file, or what is inferred
+    for (final buildEnv in BuildEnv.values) {
+      final file = loadEnvFile(env, config, buildEnv); // keys, URLs
+      expect(file.appEnv, buildEnv.name);
     }
   });
 }
 ```
+
+Run it with `flutter test` from the project root (the working directory is the
+project root there).
 
 To drive a build from your own code or tests, build a `BuildEnvironment` with
 your own `BuildFs`, `ProcessRunner` and `Console`:
@@ -569,8 +714,10 @@ in-memory `BuildFs`, a scripted `ProcessRunner` and a recording `Console`).
   `lib/src/job.dart`, its commands in `lib/src/commands.dart` and its packaging
   in `lib/src/executor.dart` (plan text and execution), then the guards for it.
 - **A new project key.** Add it to `AppConfig` (`lib/src/config.dart`) with a
-  default that keeps today's behaviour, validate it there, and document it in
-  the table above.
+  neutral default (and, if the project can state the fact itself, an
+  inference in `lib/src/inference.dart`), validate it there, and document it
+  in the table above, including what an existing app must set to keep a
+  behaviour it had before.
 
 ## Known limits
 
@@ -584,8 +731,11 @@ in-memory `BuildFs`, a scripted `ProcessRunner` and a recording `Console`).
   Flutter defaults (`build/web`, `build/windows/x64/runner/<Mode>`,
   `build/app/outputs/flutter-apk/app-<mode>.apk`); Android flavors are not
   supported.
-- `windows` and `macos` facts are required in `build_config.json` even for a
-  project that never builds those platforms.
+- The `windows` and `macos` facts are inferred from the Flutter templates
+  (`BINARY_NAME`, `PRODUCT_NAME`) and from a single `installer/*.iss`. A
+  project that moved them (a variable in `BINARY_NAME`, two installer scripts)
+  sets them in `build_config.json`; the error says which and how.
+- The web zip is a plain (not zip64) zip: at most 65535 files and 4 GiB.
 - Flutter keeps one folder per distinct set of dart-defines, build name and
   build number in `.dart_tool/flutter_build/<hash>` (100-230 MB each) and never
   prunes them. The tool warns (`low-disk`) below 3 GB, but a folder is still
@@ -607,12 +757,32 @@ dart format --output=none --set-exit-if-changed .
 ```
 
 The tests run the real code against fakes: no Flutter, ISCC or hdiutil is
-needed. They cover version parsing, the naming matrix, env file validation,
-override precedence, every guard, the command composition for all targets,
-SHA-256 vectors, manifests, zip contents, `--dry-run`, `--list`, the picker,
-the free-disk check, every key of `build_config.json`, the `bin/` entry as a
-process, and the files in `example/`. One test uses the real file system and
-checks the produced zip and checksum with `unzip` and `shasum`.
+needed. They cover version parsing, the naming matrix, inference and `init`,
+env file validation, override precedence, every guard, the command composition
+for all targets, SHA-256 vectors, manifests, zip contents and bytes,
+`--dry-run`, `--list`, the picker, the free-disk check, every key of
+`build_config.json`, the `bin/` entry as a process, and the files in
+`example/`. One test uses the real file system and checks the produced zip and
+checksum with `unzip` and `shasum`.
 
 `test/no_app_literals_test.dart` fails if an app or company name appears in
-`lib/` or `bin/`: project facts belong in `build_config.json`.
+`lib/` or `bin/`: project facts belong in `build_config.json`. Name them in
+`FORBIDDEN_LITERALS=name1,name2 dart test test/no_app_literals_test.dart`.
+
+### Both archive majors
+
+`archive` is declared as `>=3.6.0 <5.0.0`. To run the zip tests against a
+major other than the one in your lock file, use an uncommitted
+`pubspec_overrides.yaml` (it is git-ignored; delete it afterwards):
+
+```yaml
+dependency_overrides:
+  archive: 4.0.9   # or 3.6.1
+```
+
+```bash
+dart pub get && dart test test/web_zip_test.dart test/cli_test.dart
+```
+
+`test/web_zip_test.dart` holds the SHA-256 of the zip that 0.1.0 produced on
+archive 3.6.1; it passes unchanged on 3.6.x and on 4.x.

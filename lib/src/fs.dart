@@ -54,6 +54,14 @@ abstract class BuildFs {
   String createTempDir(String prefix);
 }
 
+/// The reason of [error] in a few words for a message, `Permission denied`
+/// rather than the whole exception text (the operating system's wording when
+/// it has one, else the exception's own).
+String fileProblem(FileSystemException error) {
+  final os = error.osError?.message.trim() ?? '';
+  return os.isNotEmpty ? os : error.message;
+}
+
 /// [BuildFs] on the real disk.
 class IoFs implements BuildFs {
   /// Creates the file system.

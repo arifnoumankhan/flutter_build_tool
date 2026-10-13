@@ -100,6 +100,26 @@ void main() {
       );
     });
 
+    test(
+      'a folder that cannot be written is exit 1 with the path, not a crash',
+      () async {
+        final world = TestWorld();
+        final env = world.envOn(
+          DenyingFs((path) => path.contains('/build/build_tool/defines-')),
+        );
+        expect(await runBuildTool(['apk', 'dev'], env), 1);
+        final err = world.console.stderrText;
+        expect(
+          err,
+          contains(
+            'error: file system problem: Permission denied (/repo/build/build_tool/defines-apk-dev.json).',
+          ),
+        );
+        expect(err, contains('then run the command again'));
+        expect(world.runner.streamed, isEmpty);
+      },
+    );
+
     test('declining in the picker builds nothing and exits 1', () async {
       final world = TestWorld(interactive: true, inputs: ['1', '1', '1', 'n']);
       expect(await run(world, []), 1);
@@ -311,6 +331,26 @@ void main() {
         ),
       );
     });
+
+    test(
+      'a build that ran does not tell you to run without --no-build',
+      () async {
+        final world = TestWorld();
+        expect(await run(world, ['apk', 'preprod']), 1);
+        final err = world.console.stderrText;
+        expect(err, contains('The Flutter build finished without writing it'));
+        expect(err, isNot(contains('--no-build')));
+        // Without a build, that is exactly the remedy.
+        world.console.errLines.clear();
+        expect(await run(world, ['apk', 'preprod', '--no-build']), 1);
+        expect(
+          world.console.stderrText,
+          contains(
+            'APK not found at build/app/outputs/flutter-apk/app-release.apk (expected build mode release). Run without --no-build.',
+          ),
+        );
+      },
+    );
 
     test('debug mode: -debug name suffix and the debug apk path', () async {
       final world = TestWorld();
@@ -625,6 +665,43 @@ void main() {
         contains('Web build not found at build/web'),
       );
     });
+
+    group('a stock flutter create web/index.html', () {
+      test('the profile says / and why, not the placeholder alone', () async {
+        final world = TestWorld()
+          ..fs.put('/repo/web/index.html', stockIndexHtml);
+        expect(await run(world, ['web', 'dev', '--dry-run']), 0);
+        expect(
+          world.console.stdoutText,
+          contains(
+            r'base href    /   [web/index.html: $FLUTTER_BASE_HREF becomes / (no --base-href is passed)]',
+          ),
+        );
+      });
+
+      test('the deploy hint names the folder, not the placeholder', () async {
+        final world = TestWorld()
+          ..fs.put('/repo/web/index.html', stockIndexHtml);
+        world.flutterBuilds('web', {'/repo/build/web/index.html': '<html>'});
+        expect(await run(world, ['web', 'dev']), 0);
+        final out = world.console.stdoutText;
+        expect(
+          out,
+          contains("Deploy: extract into the folder served at '/' (replace"),
+        );
+        final deploy = out.substring(out.indexOf('Deploy:'));
+        expect(deploy, isNot(contains('FLUTTER_BASE_HREF')));
+      });
+
+      test('a hardcoded href is unchanged', () async {
+        final world = TestWorld();
+        expect(await run(world, ['web', 'dev', '--dry-run']), 0);
+        expect(
+          world.console.stdoutText,
+          contains('base href    /web_admin/   [web/index.html]\n'),
+        );
+      });
+    });
   });
 
   group('windows', () {
@@ -719,6 +796,51 @@ void main() {
         ),
       );
       expect(world.runner.streamed, isEmpty);
+    });
+
+    group('a pinned exe that BINARY_NAME no longer gives', () {
+      TestWorld renamed() {
+        final world = TestWorld(host: HostOs.windows, vars: winVars);
+        world.fs.put(iscc, 'iscc');
+        world.fs.put(
+          r'C:\repo\windows\CMakeLists.txt',
+          'set(BINARY_NAME "example_app_pro")\n',
+        );
+        world.flutterBuilds('windows', {
+          r'C:\repo\build\windows\x64\runner\Release\example_app_pro.exe':
+              'exe',
+        });
+        return world;
+      }
+
+      test(
+        'the build ran, so the error names the key and the new name',
+        () async {
+          final world = renamed();
+          expect(await run(world, ['windows', 'dev']), 1);
+          final err = world.console.stderrText;
+          expect(
+            err,
+            contains(
+              'Missing build/windows/x64/runner/Release/example_app.exe. The Flutter build finished, but "windows.exe" ("example_app.exe") does not match the project: BINARY_NAME in windows/CMakeLists.txt now gives "example_app_pro.exe". Set "windows.exe" to "example_app_pro.exe" in tool/build/build_config.json, or delete the key there to follow the project.',
+            ),
+          );
+          expect(err, isNot(contains('--no-build')));
+        },
+      );
+
+      test('--no-build keeps its remedy', () async {
+        final world = renamed();
+        expect(await run(world, ['windows', 'dev']), 1);
+        world.console.errLines.clear();
+        expect(await run(world, ['windows', 'dev', '--no-build']), 1);
+        expect(
+          world.console.stderrText,
+          contains(
+            'Missing build/windows/x64/runner/Release/example_app.exe. Run without --no-build.',
+          ),
+        );
+      });
     });
 
     test(
@@ -900,6 +1022,65 @@ void main() {
           'App bundle not found at build/macos/Build/Products/Release/Example App.app',
         ),
       );
+    });
+
+    group('a pinned appName that the project no longer says', () {
+      TestWorld renamed() {
+        final world = TestWorld();
+        world.fs.put(
+          '/repo/macos/Runner/Configs/AppInfo.xcconfig',
+          'PRODUCT_NAME = Example App Pro\n',
+        );
+        world.flutterBuilds('macos', {
+          '/repo/build/macos/Build/Products/Release/Example App Pro.app/Contents/Info.plist':
+              'plist',
+        });
+        return world;
+      }
+
+      test('the build ran, so the error names the key and the new name', () async {
+        final world = renamed();
+        expect(await run(world, ['macos', 'dev']), 1);
+        final err = world.console.stderrText;
+        expect(
+          err,
+          contains(
+            'App bundle not found at build/macos/Build/Products/Release/Example App.app',
+          ),
+        );
+        expect(
+          err,
+          contains(
+            '"macos.appName" ("Example App") does not match the project: PRODUCT_NAME in macos/Runner/Configs/AppInfo.xcconfig now gives "Example App Pro"',
+          ),
+        );
+        expect(err, contains('tool/build/build_config.json'));
+        expect(err, isNot(contains('--no-build')));
+      });
+
+      test('--no-build keeps its remedy', () async {
+        final world = renamed();
+        expect(await run(world, ['macos', 'dev']), 1);
+        world.console.errLines.clear();
+        expect(await run(world, ['macos', 'dev', '--no-build']), 1);
+        expect(
+          world.console.stderrText,
+          contains('(expected build mode release). Run without --no-build.'),
+        );
+      });
+
+      test('the name did not drift: it says which key to check', () async {
+        final world = TestWorld();
+        expect(await run(world, ['macos', 'dev']), 1);
+        final err = world.console.stderrText;
+        expect(
+          err,
+          contains(
+            'The Flutter build finished without writing it. Check "macos.appName" ("Example App") in tool/build/build_config.json against PRODUCT_NAME in macos/Runner/Configs/AppInfo.xcconfig.',
+          ),
+        );
+        expect(err, isNot(contains('--no-build')));
+      });
     });
   });
 
@@ -1395,7 +1576,7 @@ void main() {
         (_) => CapturedProcess(
           0,
           'Filesystem   1024-blocks     Used Available Capacity  Mounted on\n'
-              '/dev/disk3s1    97656252 86275520 $availableKb    89%    /Volumes/Workspaces\n',
+              '/dev/disk3s1    97656252 86275520 $availableKb    89%    /Volumes/Data\n',
           '',
         ),
       );

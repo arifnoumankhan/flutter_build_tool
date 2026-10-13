@@ -311,14 +311,17 @@ void main() {
         ),
         failsWith('pubspec.yaml not found'),
       );
-      final noConfig = TestWorld()
-        ..fs.deleteFile('/repo/tool/build/build_config.json');
+      // Without build_config.json the facts are inferred (see inference_test);
+      // that needs the pubspec name, and the error says how to get out.
+      final noConfigNoName = TestWorld()
+        ..fs.deleteFile('/repo/tool/build/build_config.json')
+        ..fs.put('/repo/pubspec.yaml', 'version: 1.0.0+1\n');
       await expectLater(
         resolve(
-          noConfig,
+          noConfigNoName,
           const BuildRequest(platform: BuildPlatform.apk, env: BuildEnv.dev),
         ),
-        failsWith('tool/build/build_config.json not found'),
+        failsWith('has no top-level "name:" to infer the project facts from'),
       );
     });
   });
@@ -359,7 +362,9 @@ void main() {
         failsWith('"macos" must be an object'),
       );
       expect(
-        () => AppConfig.parse(good.replaceAll('"exe":"example_app.exe",', '')),
+        () => AppConfig.parse(
+          good.replaceAll('"exe":"example_app.exe"', '"exe":""'),
+        ),
         failsWith('"windows.exe" must be a non-empty string'),
       );
     });
