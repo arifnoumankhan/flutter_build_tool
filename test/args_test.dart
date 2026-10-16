@@ -338,6 +338,7 @@ void main() {
         '--release-signing',
         '--allow-dirty',
         '--allow-prod-override',
+        '--allow-prod-debug',
         '--dry-run',
       ]);
       expect(request.baseUrlOverride, 'http://10.0.2.2:8011');
@@ -349,6 +350,7 @@ void main() {
             request.releaseSigning &&
             request.allowDirty &&
             request.allowProdOverride &&
+            request.allowProdDebug &&
             request.dryRun,
         isTrue,
       );
@@ -500,6 +502,7 @@ void main() {
       '--msix',
       '--allow-dirty',
       '--allow-prod-override',
+      '--allow-prod-debug',
       '--dry-run',
       '--list',
       '--help',

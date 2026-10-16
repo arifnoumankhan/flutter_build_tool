@@ -197,6 +197,10 @@ List<String> _profileLines(BuildJob job) {
     if (!env.fs.fileExists(env.abs(AppConfig.configPath)))
       '  config       inferred from the project (no ${AppConfig.configPath})',
     '  target       ${request.platform.name} / ${request.env.name} / ${request.mode.name}',
+    if (request.env.isProd &&
+        request.mode == BuildMode.debug &&
+        request.allowProdDebug)
+      '  WARNING      PROD DEBUG (--allow-prod-debug): artifact is marked -debug; do not ship as release',
     '  version      ${profile.version}${profile.buildNumber == null ? '' : ' (build ${profile.buildNumber})'}',
     '  APP_ENV      ${profile.defines['APP_ENV']}',
     '  BASE_URL     ${profile.baseUrl}   [$baseSource]',

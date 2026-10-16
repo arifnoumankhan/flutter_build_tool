@@ -366,6 +366,7 @@ command line is answered with what was expected and one example.
 | `--msix` | windows: also build an MSIX package (release only) |
 | `--allow-dirty` | prod: allow a dirty git tree |
 | `--allow-prod-override` | prod: allow `--base-url` and `--env-file` |
+| `--allow-prod-debug` | prod: allow `--debug` (still marked `-debug` on the artifact and in the manifest; `--profile` stays refused) |
 | `--dry-run` | Print the resolved profile, the exact commands and the guard verdict; build nothing |
 | `--list` | Show platforms, envs and their resolved URLs (takes no other argument) |
 | `-h`, `--help` | The usage text (works even when the config is broken) |
@@ -582,7 +583,7 @@ not stop the build.
 | `prod-dev-url` | prod refuses a URL that looks like dev or local: the project's `devHostMarkers`, then `localhost`, `127.0.0.1`, `::1`, `10.0.2.2`, `192.168.` and `10.x` hosts | error | Fix the prod env file |
 | `placeholder-url` | a URL whose host ends in `.invalid` (what `init` writes) is still a placeholder. Prod refuses it; other envs warn, because the binary cannot reach a server | error on prod (warning elsewhere) | Put the real URL in the env file |
 | `prod-override` | prod refuses `--base-url` and `--env-file` unless `--allow-prod-override` is given | error | Edit and commit `<envDir>/prod.json`, or pass the flag |
-| `prod-mode` | prod is release only | error | Drop `--debug` / `--profile` |
+| `prod-mode` | prod is release only, unless `--allow-prod-debug` is given for debug (profile stays refused). The override is a loud warning; the artifact name ends in `-debug` and the manifest has `"mode": "debug"` and `"allowProdDebug": true` | error (warning when `--allow-prod-debug` and debug) | Drop `--debug` / `--profile`, or pass `--allow-prod-debug` for a marked debug prod artifact |
 | `dirty-tree` | prod needs a clean git tree (also when git cannot tell) | error on prod (warning elsewhere) | Commit or stash, or `--allow-dirty` |
 | `host-windows` / `host-macos` | `windows` builds only on Windows, `macos` only on macOS | error | Run it on that OS |
 | `keystore` | prod apk needs a valid release keystore | error on prod | Configure `android/key.properties` |

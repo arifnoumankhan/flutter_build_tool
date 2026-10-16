@@ -181,11 +181,21 @@ List<Finding> evaluateGuards(GuardInput input) {
   }
 
   if (env.isProd && request.mode != BuildMode.release) {
-    error(
-      'prod-mode',
-      'prod builds must be release builds, got ${request.mode.flutterFlag}. '
-          'Run the same command without ${request.mode.flutterFlag} (release is the default).',
-    );
+    if (request.mode == BuildMode.debug && request.allowProdDebug) {
+      warning(
+        'prod-mode',
+        'PROD DEBUG BUILD: continuing because --allow-prod-debug was given. '
+            'This is a debug binary (artifact name ends in -debug; manifest mode is "debug"). '
+            'Do not ship it as a release. Prefer a release prod build.',
+      );
+    } else {
+      error(
+        'prod-mode',
+        'prod builds must be release builds, got ${request.mode.flutterFlag}. '
+            'Run the same command without ${request.mode.flutterFlag} (release is the default)'
+            '${request.mode == BuildMode.debug ? ', or pass --allow-prod-debug to accept a marked debug prod artifact' : ''}.',
+      );
+    }
   }
 
   _dirtyGuard(input, error, warning);

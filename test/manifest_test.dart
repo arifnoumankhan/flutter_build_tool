@@ -111,6 +111,22 @@ void main() {
     expect(manifest['version'], '9.9.9');
     expect(manifest['hostOs'], 'windows');
     expect(manifest['file'], 'ExampleApp-local-v9.9.9-debug.exe');
+    expect(manifest.containsKey('allowProdDebug'), isFalse);
+  });
+
+  test('a prod debug override is recorded on the manifest', () async {
+    final manifest = await manifestFor(
+      TestWorld(),
+      const BuildRequest(
+        platform: BuildPlatform.web,
+        env: BuildEnv.prod,
+        mode: BuildMode.debug,
+        allowProdDebug: true,
+      ),
+    );
+    expect(manifest['mode'], 'debug');
+    expect(manifest['allowProdDebug'], true);
+    expect(manifest['file'], 'ExampleApp-prod-v1.0.47-debug.zip');
   });
 
   test('an app without POS_WEB_URL (POS) has no posWebUrl entry', () async {

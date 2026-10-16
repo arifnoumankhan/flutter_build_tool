@@ -525,6 +525,27 @@ void main() {
       ], 'prod-mode');
     });
 
+    test('prod + --debug --allow-prod-debug builds a marked debug artifact', () async {
+      final world = TestWorld()..seedKeystore();
+      world.flutterBuilds('apk', {
+        '/repo/build/app/outputs/flutter-apk/app-debug.apk': 'apk-bytes',
+      });
+      expect(
+        await run(world, ['apk', 'prod', '--debug', '--allow-prod-debug']),
+        0,
+      );
+      expect(world.console.stderrText, contains('warning [prod-mode]'));
+      expect(world.console.stderrText, contains('PROD DEBUG BUILD'));
+      expect(world.console.stdoutText, contains('PROD DEBUG'));
+      final manifest = jsonFile(
+        world,
+        '/repo/dist/android/ExampleApp-prod-v1.0.47-debug.apk.json',
+      );
+      expect(manifest['mode'], 'debug');
+      expect(manifest['allowProdDebug'], true);
+      expect(manifest['file'], 'ExampleApp-prod-v1.0.47-debug.apk');
+    });
+
     test('mismatched APP_ENV in the env file', () async {
       final world = TestWorld()
         ..writeEnvFile('preprod', {

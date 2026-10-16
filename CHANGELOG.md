@@ -1,3 +1,9 @@
+## 0.2.2
+
+### Added
+
+* **`--allow-prod-debug`**: opt-in so a prod build may use debug mode. Without it, prod still refuses `--debug` and `--profile` (`prod-mode` error). With it, debug is allowed and the tool prints a loud `warning [prod-mode]` (`PROD DEBUG BUILD`) plus a profile line `WARNING      PROD DEBUG`. Profile mode stays refused. The artifact name still ends in `-debug`, and the manifest records `"mode": "debug"` and `"allowProdDebug": true`.
+
 ## 0.2.1
 
 `init` now sets up the `AppEnv` class as well, so one command writes everything a new project needs.

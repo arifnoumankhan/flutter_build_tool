@@ -29,6 +29,7 @@ String manifestJson({
     'env': request.env.name,
     'platform': request.platform.name,
     'mode': request.mode.name,
+    if (request.allowProdDebug) 'allowProdDebug': true,
     'version': profile.version,
     'buildNumber': profile.buildNumber,
     'baseUrl': profile.baseUrl,

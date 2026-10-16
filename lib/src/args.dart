@@ -56,6 +56,7 @@ const Set<String> _flags = {
   '--release-signing',
   '--allow-dirty',
   '--allow-prod-override',
+  '--allow-prod-debug',
   '--dry-run',
   '--msix',
   '--list',
@@ -187,6 +188,7 @@ ParsedArgs parseArgs(
     releaseSigning: flags.contains('--release-signing'),
     allowDirty: flags.contains('--allow-dirty'),
     allowProdOverride: flags.contains('--allow-prod-override'),
+    allowProdDebug: flags.contains('--allow-prod-debug'),
     dryRun: flags.contains('--dry-run'),
     msix: flags.contains('--msix'),
   );
@@ -415,6 +417,7 @@ Options:
   --msix                         windows: also build an MSIX package (release only, see ${docs ?? 'the flutter_build_tools README'})
   --allow-dirty                  prod: allow a dirty git tree
   --allow-prod-override          prod: allow --base-url / --env-file
+  --allow-prod-debug             prod: allow --debug (artifact is still marked -debug; profile stays refused)
   --dry-run                      Print the resolved profile and exact commands, build nothing
   --list                         Show platforms, envs and their resolved URLs
   -h, --help                     This text

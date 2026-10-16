@@ -80,6 +80,7 @@ BuildRequest req(
   String? envFile,
   bool allowDirty = false,
   bool allowProdOverride = false,
+  bool allowProdDebug = false,
   bool releaseSigning = false,
   bool msix = false,
 }) => BuildRequest(
@@ -90,6 +91,7 @@ BuildRequest req(
   envFilePath: envFile,
   allowDirty: allowDirty,
   allowProdOverride: allowProdOverride,
+  allowProdDebug: allowProdDebug,
   releaseSigning: releaseSigning,
   msix: msix,
 );
@@ -629,6 +631,44 @@ void main() {
         isEmpty,
       ),
     );
+
+    test('--allow-prod-debug turns prod debug into a loud warning', () {
+      final findings = guards(
+        req(
+          BuildPlatform.web,
+          BuildEnv.prod,
+          mode: BuildMode.debug,
+          allowProdDebug: true,
+        ),
+      );
+      expect(errors(findings), isEmpty);
+      expect(warnings(findings), ['prod-mode']);
+      expect(
+        findings.single.message,
+        allOf(contains('PROD DEBUG BUILD'), contains('--allow-prod-debug')),
+      );
+    });
+
+    test('--allow-prod-debug does not allow profile', () {
+      final findings = guards(
+        req(
+          BuildPlatform.web,
+          BuildEnv.prod,
+          mode: BuildMode.profile,
+          allowProdDebug: true,
+        ),
+      );
+      expect(errors(findings), ['prod-mode']);
+      expect(findings.single.message, contains('--profile'));
+      expect(findings.single.message, isNot(contains('--allow-prod-debug')));
+    });
+
+    test('the debug refusal names --allow-prod-debug', () {
+      final message = guards(
+        req(BuildPlatform.web, BuildEnv.prod, mode: BuildMode.debug),
+      ).single.message;
+      expect(message, contains('--allow-prod-debug'));
+    });
   });
 
   group('dirty-tree truth table', () {

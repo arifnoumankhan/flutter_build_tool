@@ -146,6 +146,7 @@ class BuildRequest {
     this.releaseSigning = false,
     this.allowDirty = false,
     this.allowProdOverride = false,
+    this.allowProdDebug = false,
     this.dryRun = false,
     this.msix = false,
   });
@@ -182,6 +183,9 @@ class BuildRequest {
 
   /// `--allow-prod-override`: let prod take `--base-url` / `--env-file`.
   final bool allowProdOverride;
+
+  /// `--allow-prod-debug`: let prod build in debug mode (still refuses profile).
+  final bool allowProdDebug;
 
   /// `--dry-run`: print the plan, build nothing.
   final bool dryRun;
