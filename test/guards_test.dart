@@ -737,6 +737,14 @@ void main() {
         expect(errors(findings).contains('host-macos'), host != HostOs.macos);
       });
 
+      test('linux target on ${host.name}', () {
+        final findings = guards(
+          req(BuildPlatform.linux, BuildEnv.dev),
+          host: host,
+        );
+        expect(errors(findings).contains('host-linux'), host != HostOs.linux);
+      });
+
       test('apk and web build on ${host.name}', () {
         expect(
           errors(guards(req(BuildPlatform.apk, BuildEnv.dev), host: host)),
@@ -771,6 +779,18 @@ void main() {
         allOf(
           contains('only be built on macOS'),
           contains('this host: windows'),
+        ),
+      );
+      final linux = guards(
+        req(BuildPlatform.linux, BuildEnv.dev),
+        host: HostOs.macos,
+      ).single.message;
+      expect(
+        linux,
+        allOf(
+          contains('only be built on Linux'),
+          contains('this host: macos'),
+          contains('cross-build'),
         ),
       );
     });

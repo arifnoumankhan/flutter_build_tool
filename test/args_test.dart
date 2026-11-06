@@ -278,7 +278,7 @@ void main() {
               !error.startsWith('Unknown option')) {
             expect(
               error,
-              contains('Expected a platform (apk, web, windows, macos)'),
+              contains('Expected a platform (apk, web, windows, macos, linux)'),
               reason: '$args',
             );
           }
@@ -401,7 +401,7 @@ void main() {
           reason: '$args',
         );
         for (final valid in [
-          'apk, web, windows, macos',
+          'apk, web, windows, macos, linux',
           'dev, preprod, prod, local',
           'release, debug, profile',
         ]) {

@@ -10,7 +10,7 @@ enum HostOs {
   /// Windows (builds `windows`).
   windows,
 
-  /// Linux and everything else (builds only `apk` and `web`).
+  /// Linux (builds `linux`, plus `apk` and `web`).
   linux;
 
   /// Maps `Platform.operatingSystem` to a [HostOs]; unknown names are [linux].
@@ -35,7 +35,10 @@ enum BuildPlatform {
   windows('windows', 'exe'),
 
   /// macOS disk image; lands in `dist/macos/`.
-  macos('macos', 'dmg');
+  macos('macos', 'dmg'),
+
+  /// Linux desktop bundle zipped for distribution; lands in `dist/linux/`.
+  linux('linux', 'zip');
 
   const BuildPlatform(this.distDir, this.extension);
 
@@ -56,6 +59,7 @@ enum BuildPlatform {
         'web' => BuildPlatform.web,
         'windows' || 'exe' => BuildPlatform.windows,
         'macos' || 'dmg' => BuildPlatform.macos,
+        'linux' => BuildPlatform.linux,
         _ => null,
       };
 
@@ -65,6 +69,7 @@ enum BuildPlatform {
     BuildPlatform.web,
     if (host == HostOs.windows) BuildPlatform.windows,
     if (host == HostOs.macos) BuildPlatform.macos,
+    if (host == HostOs.linux) BuildPlatform.linux,
   ];
 }
 

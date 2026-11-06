@@ -74,6 +74,10 @@ List<String> describePlan(BuildJob job, {String? isccPath}) {
       )) {
         steps.add('\$ ${spec.display}');
       }
+    case BuildPlatform.linux:
+      steps.add(
+        'zip ${env.rel(job.builtLinuxBundle)} (files at the zip root; no .DS_Store, __MACOSX, .last_build_id, *.zip) -> ${env.rel(job.distFile('zip'))}',
+      );
   }
   steps.add(
     'write <artifact>.sha256 and <artifact>.json next to each artifact',
@@ -117,6 +121,7 @@ Future<List<Artifact>> executeJob(BuildJob job) async {
     BuildPlatform.web => [_packageWeb(job)],
     BuildPlatform.windows => await _packageWindows(job, iscc!),
     BuildPlatform.macos => [await _packageMacos(job)],
+    BuildPlatform.linux => [_packageLinux(job)],
   };
   for (final artifact in artifacts) {
     await _finalize(
@@ -282,6 +287,28 @@ Artifact _packageWeb(BuildJob job) {
       fs: env.fs,
       path: env.path,
       webDir: job.builtWebDir,
+      modified: env.now(),
+    ),
+  );
+  return Artifact(target);
+}
+
+Artifact _packageLinux(BuildJob job) {
+  final env = job.env;
+  final bundle = job.builtLinuxBundle;
+  if (!env.fs.dirExists(bundle)) {
+    throw BuildException(
+      'Linux bundle not found at ${env.rel(bundle)} (expected build/linux/<arch>/${job.request.mode.name}/bundle). ${_outputMissingTail(job, 'The Flutter build finished without writing the bundle; enable Linux desktop (`flutter config --enable-linux-desktop`) and install clang, cmake, ninja-build, pkg-config and libgtk-3-dev.')}',
+    );
+  }
+  final target = job.distFile('zip');
+  env.console.out('==> zip ${env.rel(bundle)} -> ${env.rel(target)}');
+  env.fs.writeBytes(
+    target,
+    buildWebZip(
+      fs: env.fs,
+      path: env.path,
+      webDir: bundle,
       modified: env.now(),
     ),
   );

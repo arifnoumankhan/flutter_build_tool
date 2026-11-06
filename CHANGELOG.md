@@ -1,3 +1,10 @@
+## 0.2.3
+
+### Added
+
+* **`linux` platform**: builds the Flutter Linux desktop bundle on a Linux host and zips it to `dist/linux/<Name>-<env>-v<ver>[-debug|-profile].zip` (files at the zip root; same sidecars as web). Refused on macOS and Windows (`host-linux`). Looks under `build/linux/x64|arm64/<mode>/bundle`.
+* Help text and `--list` include `linux` when the host is Linux.
+
 ## 0.2.2
 
 ### Added

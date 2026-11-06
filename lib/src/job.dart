@@ -56,6 +56,20 @@ class BuildJob {
     'build/macos/Build/Products/${request.mode.dirName}/${profile.app.macosAppName}.app',
   );
 
+  /// Where `flutter build linux` leaves the runnable bundle.
+  ///
+  /// Flutter uses a lowercase mode folder (`release`, not `Release`) and an
+  /// architecture segment (`x64` or `arm64`). The first existing path wins.
+  String get builtLinuxBundle {
+    for (final arch in const ['x64', 'arm64']) {
+      final dir = env.abs(
+        'build/linux/$arch/${request.mode.name}/bundle',
+      );
+      if (env.fs.dirExists(dir)) return dir;
+    }
+    return env.abs('build/linux/x64/${request.mode.name}/bundle');
+  }
+
   /// Marker proving what the existing output was built for (see stamp.dart).
   String get stampPath => env.abs(
     'build/build_tool/stamp-${request.platform.name}-${request.mode.name}.json',

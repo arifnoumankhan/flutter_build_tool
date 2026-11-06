@@ -4,7 +4,7 @@
 # pubspec.yaml
 dev_dependencies:
   flutter_build_tools:
-    git: {url: 'https://github.com/arifnoumankhan/flutter_build_tool.git', ref: v0.2.1}
+    git: {url: 'https://github.com/arifnoumankhan/flutter_build_tool.git', ref: v0.2.3}
 ```
 ```bash
 flutter pub get
@@ -37,6 +37,8 @@ dart run flutter_build_tools web release dev
 #   -> dist/web/ExampleApp-dev-v1.0.47.zip
 dart run flutter_build_tools windows release prod        # on a Windows machine
 #   -> dist/windows/ExampleApp-prod-v1.0.47.exe
+dart run flutter_build_tools linux release prod         # on a Linux machine
+#   -> dist/linux/ExampleApp-prod-v1.0.47.zip
 ```
 
 It is a pure Dart package (no Flutter SDK dependency), so it runs from any
@@ -91,11 +93,12 @@ What you get over a hand-written `flutter build` script:
 | `android/key.properties` | a release-signed apk (see [apk](#apk)) |
 | Windows host + [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`) | the `windows` target |
 | macOS host (`hdiutil`, `cp`, `ln`) | the `macos` target |
+| Linux host (`clang`, `cmake`, `ninja-build`, `pkg-config`, `libgtk-3-dev`) | the `linux` target |
 | the [`msix`](https://pub.dev/packages/msix) package in `dev_dependencies` | `--msix` only |
 
-Flutter cannot cross-build desktop apps, so `windows` on a Mac (or `macos` on
-Windows) is refused with a message that says where to run it. `apk` and `web`
-build everywhere.
+Flutter cannot cross-build desktop apps, so `windows` on a Mac (or `macos` /
+`linux` on the wrong host) is refused with a message that says where to run
+it. `apk` and `web` build everywhere.
 
 ## Install
 
@@ -108,7 +111,7 @@ dev_dependencies:
   flutter_build_tools:
     git:
       url: https://github.com/arifnoumankhan/flutter_build_tool.git
-      ref: v0.2.1
+      ref: v0.2.3
 ```
 
 Then run `flutter pub get` in the app (`dart run` also resolves a declared
@@ -341,6 +344,7 @@ dart run flutter_build_tools init [--force] [--dry-run] [--no-app-env]   (see `i
 | `web` | | any | `.zip` of the site | `dist/web/` |
 | `windows` | `exe` | Windows only | Inno Setup installer `.exe` (plus `.msix` with `--msix`) | `dist/windows/` |
 | `macos` | `dmg` | macOS only | `.dmg` | `dist/macos/` |
+| `linux` | | Linux only | `.zip` of the runnable bundle | `dist/linux/` |
 
 Environments are `dev`, `preprod`, `prod` and `local` (a closed set, see
 [Extending it](#extending-it)). Modes are `release` (the default), `debug` and
@@ -585,7 +589,7 @@ not stop the build.
 | `prod-override` | prod refuses `--base-url` and `--env-file` unless `--allow-prod-override` is given | error | Edit and commit `<envDir>/prod.json`, or pass the flag |
 | `prod-mode` | prod is release only, unless `--allow-prod-debug` is given for debug (profile stays refused). The override is a loud warning; the artifact name ends in `-debug` and the manifest has `"mode": "debug"` and `"allowProdDebug": true` | error (warning when `--allow-prod-debug` and debug) | Drop `--debug` / `--profile`, or pass `--allow-prod-debug` for a marked debug prod artifact |
 | `dirty-tree` | prod needs a clean git tree (also when git cannot tell) | error on prod (warning elsewhere) | Commit or stash, or `--allow-dirty` |
-| `host-windows` / `host-macos` | `windows` builds only on Windows, `macos` only on macOS | error | Run it on that OS |
+| `host-windows` / `host-macos` / `host-linux` | `windows` builds only on Windows, `macos` only on macOS, `linux` only on Linux | error | Run it on that OS |
 | `keystore` | prod apk needs a valid release keystore | error on prod | Configure `android/key.properties` |
 | `keystore` | any other release apk without a usable or opted-in keystore is signed with the debug key | warning | Pass `--release-signing` |
 | `msix-mode` | `--msix` is release only | error | Drop `--debug` / `--profile` |
@@ -681,6 +685,16 @@ flutter_build_tools macos <env>` runs `flutter build macos --release`; the tool
 passes no signing identity, so a release build signs with whatever the Xcode
 project selects. To get an unsigned build pass `debug`:
 `macos debug dev` produces `<Slug>-dev-v<version>-debug.dmg`.
+
+### linux
+
+`flutter build linux`, then the runnable bundle under
+`build/linux/<arch>/<mode>/bundle` is zipped to `dist/linux/` the same way as
+the web site (files at the zip root; no `.DS_Store`, `__MACOSX`,
+`.last_build_id`, nested `*.zip`). The first existing architecture folder of
+`x64` or `arm64` wins. Requires a Linux host and the usual Flutter Linux
+desktop packages (`clang`, `cmake`, `ninja-build`, `pkg-config`,
+`libgtk-3-dev`).
 
 ## `--no-build` and the build stamp
 

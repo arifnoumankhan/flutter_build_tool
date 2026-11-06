@@ -72,12 +72,13 @@ void main() {
     });
   });
 
-  group('matrix: 4 platforms x 4 envs x 3 modes x 2 apps', () {
+  group('matrix: 5 platforms x 4 envs x 3 modes x 2 apps', () {
     const extensions = {
       BuildPlatform.apk: 'apk',
       BuildPlatform.web: 'zip',
       BuildPlatform.windows: 'exe',
       BuildPlatform.macos: 'dmg',
+      BuildPlatform.linux: 'zip',
     };
     const suffixes = {
       BuildMode.release: '',
@@ -101,7 +102,7 @@ void main() {
       }
     }
 
-    tearDownAll(() => expect(checked, 96));
+    tearDownAll(() => expect(checked, 120));
   });
 
   test('the version is inserted as given', () {
@@ -132,10 +133,11 @@ void main() {
   test('platform aliases and the dist folders', () {
     expect(BuildPlatform.parse('exe'), BuildPlatform.windows);
     expect(BuildPlatform.parse('DMG'), BuildPlatform.macos);
+    expect(BuildPlatform.parse('linux'), BuildPlatform.linux);
     expect(BuildPlatform.parse('ios'), isNull);
     expect(
       [for (final p in BuildPlatform.values) p.distDir],
-      ['android', 'web', 'windows', 'macos'],
+      ['android', 'web', 'windows', 'macos', 'linux'],
     );
   });
 }

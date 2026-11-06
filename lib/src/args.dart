@@ -89,7 +89,7 @@ const Set<String> _valued = {
 };
 
 const String _expected =
-    'Expected a platform (apk, web, windows, macos), an environment (dev, preprod, prod, local) and optionally a mode (release, debug, profile), in any order.';
+    'Expected a platform (apk, web, windows, macos, linux), an environment (dev, preprod, prod, local) and optionally a mode (release, debug, profile), in any order.';
 
 String _example(String invocation) =>
     'Example: $invocation apk release preprod';

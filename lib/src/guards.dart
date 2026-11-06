@@ -226,6 +226,13 @@ List<Finding> evaluateGuards(GuardInput input) {
           'Run this command on a Mac.',
     );
   }
+  if (request.platform == BuildPlatform.linux && input.host != HostOs.linux) {
+    error(
+      'host-linux',
+      'The linux target can only be built on Linux (this host: ${input.host.name}); Flutter cannot cross-build desktop apps. '
+          'Run this command on a Linux machine (or a Linux CI runner).',
+    );
+  }
 
   if (request.msix && request.mode != BuildMode.release) {
     error(

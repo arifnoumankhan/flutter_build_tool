@@ -412,6 +412,10 @@ void main() {
         '/repo/build/windows/x64/runner/Debug',
       );
       expect(
+        (await job(BuildPlatform.linux)).builtLinuxBundle,
+        '/repo/build/linux/x64/release/bundle',
+      );
+      expect(
         (await job(BuildPlatform.web)).stampPath,
         '/repo/build/build_tool/stamp-web-release.json',
       );
