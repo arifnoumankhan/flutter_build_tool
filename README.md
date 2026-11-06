@@ -93,7 +93,7 @@ What you get over a hand-written `flutter build` script:
 | `android/key.properties` | a release-signed apk (see [apk](#apk)) |
 | Windows host + [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`) | the `windows` target |
 | macOS host (`hdiutil`, `cp`, `ln`) | the `macos` target |
-| Linux host (`clang`, `cmake`, `ninja-build`, `pkg-config`, `libgtk-3-dev`) | the `linux` target |
+| Linux host (`clang`, `cmake`, `ninja-build`, `pkg-config`, `libgtk-3-dev`) plus `appimagetool` on `PATH` | the `linux` target (zip + AppImage) |
 | the [`msix`](https://pub.dev/packages/msix) package in `dev_dependencies` | `--msix` only |
 
 Flutter cannot cross-build desktop apps, so `windows` on a Mac (or `macos` /
@@ -344,7 +344,7 @@ dart run flutter_build_tools init [--force] [--dry-run] [--no-app-env]   (see `i
 | `web` | | any | `.zip` of the site | `dist/web/` |
 | `windows` | `exe` | Windows only | Inno Setup installer `.exe` (plus `.msix` with `--msix`) | `dist/windows/` |
 | `macos` | `dmg` | macOS only | `.dmg` | `dist/macos/` |
-| `linux` | | Linux only | `.zip` of the runnable bundle | `dist/linux/` |
+| `linux` | | Linux only | `.zip` of the runnable bundle + `.AppImage` | `dist/linux/` |
 
 Environments are `dev`, `preprod`, `prod` and `local` (a closed set, see
 [Extending it](#extending-it)). Modes are `release` (the default), `debug` and
@@ -690,11 +690,12 @@ project selects. To get an unsigned build pass `debug`:
 
 `flutter build linux`, then the runnable bundle under
 `build/linux/<arch>/<mode>/bundle` is zipped to `dist/linux/` the same way as
-the web site (files at the zip root; no `.DS_Store`, `__MACOSX`,
-`.last_build_id`, nested `*.zip`). The first existing architecture folder of
-`x64` or `arm64` wins. Requires a Linux host and the usual Flutter Linux
-desktop packages (`clang`, `cmake`, `ninja-build`, `pkg-config`,
-`libgtk-3-dev`).
+the web site (files at the zip root; the runner binary is stored executable;
+no `.DS_Store`, `__MACOSX`, `.last_build_id`, nested `*.zip`). The same
+bundle is also packaged as an **AppImage** (requires `appimagetool` on
+`PATH`). The first existing architecture folder of `x64` or `arm64` wins.
+Requires a Linux host and the usual Flutter Linux desktop packages (`clang`,
+`cmake`, `ninja-build`, `pkg-config`, `libgtk-3-dev`).
 
 ## `--no-build` and the build stamp
 

@@ -121,6 +121,31 @@ void main() {
         'index.html',
       ]);
     });
+
+    test('executableEntries mark unix mode 0755 on those paths only', () {
+      final fs = MemoryFs()
+        ..put('/repo/build/linux/posty', 'ELF')
+        ..put('/repo/build/linux/lib/libapp.so', 'so');
+      final bytes = buildWebZip(
+        fs: fs,
+        path: posix,
+        webDir: '/repo/build/linux',
+        modified: DateTime.utc(2026, 10, 6, 12),
+        executableEntries: {'posty'},
+      );
+      // Central-directory external attributes sit at a fixed offset after the
+      // local headers; decode via archive and check unixMode when available.
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final runner = archive.findFile('posty')!;
+      final lib = archive.findFile('lib/libapp.so')!;
+      expect(runner.isFile, isTrue);
+      expect(lib.isFile, isTrue);
+      // archive 3.x exposes unixPermissions / mode differently; probe raw CD.
+      final postyMode = _unixModeFromZip(bytes, 'posty');
+      final libMode = _unixModeFromZip(bytes, 'lib/libapp.so');
+      expect(postyMode & 0x1FF, 0x1ED); // 0755
+      expect(libMode & 0x1FF, 0x1A4); // 0644
+    });
   });
 
   // The zip is written by this package (archive only supplies Deflate and
@@ -308,4 +333,36 @@ void main() {
       expect(servedBaseHref(null), isNull);
     });
   });
+}
+
+/// Unix mode from the central-directory external attributes of [entryName].
+int _unixModeFromZip(List<int> bytes, String entryName) {
+  final data = Uint8List.fromList(bytes);
+  final nameBytes = utf8.encode(entryName);
+  // Scan for central file headers (0x02014b50).
+  for (var i = 0; i < data.length - 46; i++) {
+    if (data[i] != 0x50 ||
+        data[i + 1] != 0x4b ||
+        data[i + 2] != 0x01 ||
+        data[i + 3] != 0x02) {
+      continue;
+    }
+    final nameLen = data[i + 28] | (data[i + 29] << 8);
+    if (nameLen != nameBytes.length) continue;
+    var match = true;
+    for (var j = 0; j < nameLen; j++) {
+      if (data[i + 46 + j] != nameBytes[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (!match) continue;
+    final external =
+        data[i + 38] |
+        (data[i + 39] << 8) |
+        (data[i + 40] << 16) |
+        (data[i + 41] << 24);
+    return (external >> 16) & 0xffff;
+  }
+  fail('central directory entry not found for $entryName');
 }

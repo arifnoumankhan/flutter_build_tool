@@ -37,7 +37,8 @@ enum BuildPlatform {
   /// macOS disk image; lands in `dist/macos/`.
   macos('macos', 'dmg'),
 
-  /// Linux desktop bundle zipped for distribution; lands in `dist/linux/`.
+  /// Linux desktop: zip of the runnable bundle plus an AppImage; lands in
+  /// `dist/linux/`. Primary extension is the zip; the AppImage is a sibling.
   linux('linux', 'zip');
 
   const BuildPlatform(this.distDir, this.extension);

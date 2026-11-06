@@ -11,6 +11,7 @@ import 'package:flutter_build_tools/src/environment.dart';
 import 'package:flutter_build_tools/src/git.dart';
 import 'package:flutter_build_tools/src/inference.dart';
 import 'package:flutter_build_tools/src/job.dart';
+import 'package:flutter_build_tools/src/linux_appimage.dart';
 import 'package:flutter_build_tools/src/manifest.dart';
 import 'package:flutter_build_tools/src/model.dart';
 import 'package:flutter_build_tools/src/runner.dart';
@@ -76,7 +77,10 @@ List<String> describePlan(BuildJob job, {String? isccPath}) {
       }
     case BuildPlatform.linux:
       steps.add(
-        'zip ${env.rel(job.builtLinuxBundle)} (files at the zip root; no .DS_Store, __MACOSX, .last_build_id, *.zip) -> ${env.rel(job.distFile('zip'))}',
+        'zip ${env.rel(job.builtLinuxBundle)} (files at the zip root; binary +x; no .DS_Store, __MACOSX, .last_build_id, *.zip) -> ${env.rel(job.distFile('zip'))}',
+      );
+      steps.add(
+        'appimagetool AppDir -> ${env.rel(job.distFile('AppImage'))} (requires appimagetool on PATH)',
       );
   }
   steps.add(
@@ -121,7 +125,7 @@ Future<List<Artifact>> executeJob(BuildJob job) async {
     BuildPlatform.web => [_packageWeb(job)],
     BuildPlatform.windows => await _packageWindows(job, iscc!),
     BuildPlatform.macos => [await _packageMacos(job)],
-    BuildPlatform.linux => [_packageLinux(job)],
+    BuildPlatform.linux => await _packageLinux(job),
   };
   for (final artifact in artifacts) {
     await _finalize(
@@ -293,7 +297,7 @@ Artifact _packageWeb(BuildJob job) {
   return Artifact(target);
 }
 
-Artifact _packageLinux(BuildJob job) {
+Future<List<Artifact>> _packageLinux(BuildJob job) async {
   final env = job.env;
   final bundle = job.builtLinuxBundle;
   if (!env.fs.dirExists(bundle)) {
@@ -301,18 +305,68 @@ Artifact _packageLinux(BuildJob job) {
       'Linux bundle not found at ${env.rel(bundle)} (expected build/linux/<arch>/${job.request.mode.name}/bundle). ${_outputMissingTail(job, 'The Flutter build finished without writing the bundle; enable Linux desktop (`flutter config --enable-linux-desktop`) and install clang, cmake, ninja-build, pkg-config and libgtk-3-dev.')}',
     );
   }
-  final target = job.distFile('zip');
-  env.console.out('==> zip ${env.rel(bundle)} -> ${env.rel(target)}');
+  final binaryName =
+      linuxBundleBinaryName(fs: env.fs, root: env.root) ??
+      _fallbackLinuxBinaryName(env, bundle);
+  final zipTarget = job.distFile('zip');
+  env.console.out('==> zip ${env.rel(bundle)} -> ${env.rel(zipTarget)}');
   env.fs.writeBytes(
-    target,
+    zipTarget,
     buildWebZip(
       fs: env.fs,
       path: env.path,
       webDir: bundle,
       modified: env.now(),
+      executableEntries: {binaryName},
     ),
   );
-  return Artifact(target);
+
+  final appImageTarget = job.distFile('AppImage');
+  final appDir = env.fs.createTempDir(
+    '${job.profile.app.slug.toLowerCase()}_appdir_',
+  );
+  try {
+    final tool = stageLinuxAppDir(
+      env: env,
+      job: job,
+      bundle: bundle,
+      appDir: appDir,
+      appImagePath: appImageTarget,
+      binaryName: binaryName,
+    );
+    await _mustRun(
+      env,
+      appRunSymlinkSpec(appDir: appDir, binaryName: binaryName),
+      'Could not create AppRun symlink for the AppImage.',
+    );
+    await _mustRun(
+      env,
+      tool,
+      'Could not create the AppImage. Install appimagetool and put it on PATH.',
+    );
+  } finally {
+    env.fs.deleteDir(appDir);
+  }
+  if (!env.fs.fileExists(appImageTarget)) {
+    throw BuildException(
+      'appimagetool finished but ${env.rel(appImageTarget)} is missing.',
+    );
+  }
+  return [Artifact(zipTarget), Artifact(appImageTarget)];
+}
+
+/// When CMake is missing, use the only top-level non-dotfile in the bundle.
+String _fallbackLinuxBinaryName(BuildEnvironment env, String bundle) {
+  final names = [
+    for (final file in env.fs.listFiles(bundle))
+      env.path.basename(file),
+  ]..sort();
+  if (names.length == 1) return names.single;
+  throw BuildException(
+    'Cannot find BINARY_NAME in linux/CMakeLists.txt and the bundle at '
+    '${env.rel(bundle)} does not contain exactly one top-level file '
+    '(found: ${names.isEmpty ? 'none' : names.join(', ')}).',
+  );
 }
 
 void _printDeployHint(BuildJob job) {

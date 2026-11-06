@@ -133,6 +133,13 @@ void main() {
       expect(script, contains(r'OutputDir=..\build\windows\installers'));
       expect(script, contains(r'..\build\windows\x64\runner\{#MyBuildMode}\*'));
       expect(script, contains('example_app.exe'));
+      expect(script, contains('copy_vc_crt.ps1'));
+      final crt = read('installer/copy_vc_crt.ps1');
+      expect(crt, contains('msvcp140.dll'));
+      expect(crt, contains('vcruntime140.dll'));
+      expect(crt, contains('vcruntime140_1.dll'));
+      expect(crt, contains('msvcp140_1.dll'));
+      expect(crt, contains('msvcp140_2.dll'));
     });
   });
 

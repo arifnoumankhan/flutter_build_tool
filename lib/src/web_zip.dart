@@ -23,14 +23,16 @@ bool isExcludedFromWebZip(String relativePath) =>
 /// The zip of every non-excluded file under [webDir], sorted by path, with
 /// the files at the zip root.
 ///
-/// The bytes are a pure function of the file names, their content and
-/// [modified]: entry times are [modified] in UTC (not the machine's local
-/// time), permissions are fixed, entries are sorted and there is no random
-/// value. They are also the same whichever major version of `package:archive`
-/// (3.6.x or 4.x) the app resolved, because the container is written here and
-/// `package:archive` only supplies the two primitives that exist unchanged in
-/// both: the pure-Dart `Deflate` (4.x would otherwise switch to the native
-/// zlib, which compresses to different bytes) and `getCrc32`.
+/// The bytes are a pure function of the file names, their content,
+/// [modified] and [executableEntries]: entry times are [modified] in UTC
+/// (not the machine's local time), permissions are fixed (`644`, or `755`
+/// for relative paths listed in [executableEntries]), entries are sorted and
+/// there is no random value. They are also the same whichever major version
+/// of `package:archive` (3.6.x or 4.x) the app resolved, because the
+/// container is written here and `package:archive` only supplies the two
+/// primitives that exist unchanged in both: the pure-Dart `Deflate` (4.x
+/// would otherwise switch to the native zlib, which compresses to different
+/// bytes) and `getCrc32`.
 ///
 /// A plain (non-zip64) zip: more than 65535 files, or a file or archive of
 /// 4 GiB or more, is refused with a message instead of a corrupt zip.
@@ -39,6 +41,7 @@ List<int> buildWebZip({
   required p.Context path,
   required String webDir,
   required DateTime modified,
+  Set<String> executableEntries = const {},
 }) {
   final entries = <String, String>{
     for (final file in fs.listFiles(webDir, recursive: true))
@@ -106,6 +109,7 @@ List<int> buildWebZip({
       compressed: packed.length,
       size: content.length,
       offset: offset,
+      executable: executableEntries.contains(relative),
     );
     count++;
   }
@@ -146,9 +150,9 @@ const int _zipUtf8 = 0x0800;
 /// Method 8: deflate.
 const int _zipDeflate = 8;
 
-/// `rw-r--r--` in the high half of the external attributes (what the old
-/// `zip` command and `package:archive` both wrote for a regular file).
-const int _zipExternalAttributes = 420 << 16;
+/// `rwxr-xr-x` regular file (unix `0100755`) in the high half of external
+/// attributes, for Linux bundle binaries marked via [executableEntries].
+const int _zipExternalAttributesExecutable = 0x81ed << 16;
 
 void _writeLocalHeader(
   BytesBuilder out, {
@@ -185,10 +189,18 @@ void _writeCentralHeader(
   required int compressed,
   required int size,
   required int offset,
+  bool executable = false,
 }) {
+  // Executable entries: Unix host (3) + mode 0755 so unzip restores +x.
+  // Everything else keeps the historical MS-DOS host and `420 << 16` so web
+  // zip goldens stay byte-identical when [executableEntries] is empty.
+  final versionMadeBy = executable ? (3 << 8) | _zipVersion : _zipVersion;
+  final external = executable
+      ? _zipExternalAttributesExecutable
+      : (420 << 16);
   final header = _Le()
     ..u32(0x02014b50)
-    ..u16(_zipVersion) // made by: MS-DOS (0) << 8 | 2.0
+    ..u16(versionMadeBy)
     ..u16(_zipVersion)
     ..u16(_zipUtf8)
     ..u16(_zipDeflate)
@@ -202,7 +214,7 @@ void _writeCentralHeader(
     ..u16(0) // no comment
     ..u16(0) // disk number
     ..u16(0) // internal attributes
-    ..u32(_zipExternalAttributes)
+    ..u32(external)
     ..u32(offset);
   out
     ..add(header.bytes)

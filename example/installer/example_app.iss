@@ -20,6 +20,13 @@
   #define MyBuildMode "Release"
 #endif
 
+; App-local VC++ 2015-2022 CRT, copied at compile time from this PC's Visual
+; Studio / Build Tools redist (installer\copy_vc_crt.ps1). The [Files] entry
+; below then packs the DLLs next to the exe. About 1 MB. Not vc_redist.x64.exe.
+#if Exec("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File """ + AddBackslash(SourcePath) + "copy_vc_crt.ps1"" -Destination """ + AddBackslash(SourcePath) + "..\build\windows\x64\runner\" + MyBuildMode + """", SourcePath, 1, SW_HIDE) != 0
+  #error VC++ runtime DLLs were not copied. Install Visual Studio 2022 or Build Tools with the Desktop development with C++ workload, build the Windows app, then compile this script again. See installer/copy_vc_crt.ps1.
+#endif
+
 [Setup]
 AppId={{00000000-0000-0000-0000-000000000000}
 AppName={#MyAppName}

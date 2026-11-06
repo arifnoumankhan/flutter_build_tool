@@ -1,3 +1,13 @@
+## 0.2.4
+
+### Added
+
+* **Linux AppImage**: after the bundle zip, stages an AppDir and runs `appimagetool` → `dist/linux/<Name>-<env>-v<ver>[-debug|-profile].AppImage` (requires `appimagetool` on `PATH`).
+
+### Fixed
+
+* **Linux zip executable bit**: the bundle binary is stored as mode `0755` so `./posty` works after unzip without `chmod`.
+
 ## 0.2.3
 
 ### Added
